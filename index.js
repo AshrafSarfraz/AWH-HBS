@@ -8,6 +8,7 @@ require("dotenv").config();
 
 // HR SYSTEM
 const { router: employeeRouter, startEmployeeCron } = require("./src/database/hrSystem");
+
 const adminFormRoutes = require("./src/hr-system/routes/adminFormRoutes");
 const approvalPriorityRoutes = require("./src/hr-system/routes/approvalPriorityRoutes");
 const publicFormRoutes = require("./src/hr-system/routes/publicFormRoutes");
@@ -67,6 +68,7 @@ app.use("/api/phoneAuth", phoneAuthRoutes);
 const PORT = process.env.PORT || 3000; // Render supplies PORT
 app.listen(PORT, () => {
   console.log("Server running on port", PORT);
+  startEmployeeCron();
 });
 
 

@@ -25,7 +25,7 @@ async function syncEmployees() {
 }
 
 function startEmployeeCron() {
-  cron.schedule('0 0 * * *', syncEmployees);
+  cron.schedule('0 22 * * *', syncEmployees, { timezone: 'Asia/Qatar' });
 }
 
 router.get('/employees', async (req, res) => {
