@@ -1,26 +1,3 @@
-// // src/db/connect.js
-// const mongoose = require('mongoose');
-
-// async function connectDB() {
-//   const uri = process.env.MONGO_URI;
-//   if (!uri) {
-//     throw new Error('MONGO_URI missing in .env');
-//   }
-
-//   // avoid double-connect in dev with nodemon hot reload
-//   if (mongoose.connection.readyState === 1) return;
-
-//   await mongoose.connect(uri, {
-//     useNewUrlParser: true,
-//     useUnifiedTopology: true,
-//   });
-// }
-
-// module.exports = connectDB;
-
-
-
-
 // /config/db.js
 const mongoose = require("mongoose");
 

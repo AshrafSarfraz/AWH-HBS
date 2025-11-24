@@ -91,7 +91,7 @@ exports.requestOtp = async (req, res) => {
       .services(verifyService)
       .verifications.create({
         to: normalizedPhone,
-        channel: "sms",
+        channel: "whatsapp",
       });
 
     user.lastOtpSentAt = new Date(now);
