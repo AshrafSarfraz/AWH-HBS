@@ -307,6 +307,7 @@ async function getAllApprovals(req, res) {
         approvals: 1,
         requesterName: 1,
         requesterEmail: 1,
+        formDataPayload: 1, 
       }
     )
       .sort({ createdAt: -1 })
@@ -321,6 +322,8 @@ async function getAllApprovals(req, res) {
       requester: {
         name: f.requesterName,
         email: f.requesterEmail,
+        department: f.formDataPayload?.employee?.department || "",  // 👈 yahan se
+       
       },
       approvals: (f.approvals || []).map((a) => ({
         role: a.role,
