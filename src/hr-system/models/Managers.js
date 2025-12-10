@@ -1,4 +1,6 @@
 const mongoose = require("mongoose");
+const { HR_DB } = require("../../database/connect");
+
 
 const ManagerSchema = new mongoose.Schema(
   {
@@ -10,4 +12,4 @@ const ManagerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Manager", ManagerSchema);
+module.exports = HR_DB.model("Manager", ManagerSchema);

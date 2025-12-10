@@ -4,6 +4,9 @@ const sql = require('mssql');
 const mongoose = require('mongoose');
 const cron = require('node-cron');
 require('dotenv').config();
+const { HR_DB } = require('../database/connect');
+
+
 
 const sqlConfig = {
   user: 'AlWessil',
@@ -14,7 +17,7 @@ const sqlConfig = {
 };
 
 const employeeSchema = new mongoose.Schema({}, { collection: 'employees', strict: false });
-const Employee = mongoose.model('Employee', employeeSchema);
+const Employee = HR_DB.model('Employee', employeeSchema);
 
 async function syncEmployees() {
   const pool = await sql.connect(sqlConfig);

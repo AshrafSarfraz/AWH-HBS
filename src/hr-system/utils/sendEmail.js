@@ -65,7 +65,7 @@ async function sendEmail({ to, subject, body, html }) {
     const tx = getTransporter();
 
     const info = await tx.sendMail({
-      from: process.env.EMAIL_USER ||process.env.EMAIL_FROM ,
+      from: process.env.EMAIL_FROM ,
       to,
       subject,
       text: body, // plain text fallback

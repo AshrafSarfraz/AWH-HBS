@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-
+const { HR_DB } = require("../../database/connect");
 // who approves each formKey, in what order
 const ApprovalPrioritySchema = new mongoose.Schema(
   {
@@ -18,4 +18,4 @@ const ApprovalPrioritySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("ApprovalPriority", ApprovalPrioritySchema);
+module.exports = HR_DB.model("ApprovalPriority", ApprovalPrioritySchema);

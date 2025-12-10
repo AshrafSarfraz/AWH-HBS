@@ -275,78 +275,10 @@ async function submitForm(req, res) {
         </table>
         `;
         
-
-            // // 🎨 HTML email (for manager / first approver)
-            // const html = `
-            //   <div style="font-family: Arial, sans-serif;  ">
-            //     <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; margin:0 auto; background:#f5f5f5;  border-radius:8px; overflow:hidden;">
-            //       <tr>
-            //         <td style="background:#31368A; padding:16px 24px; color:#ffffff;">
-            //           <table width="100%">
-            //             <tr>
-            //               <td style="font-size:20px; font-weight:bold ;">
-            //                 <!-- yahan real logo URL lagao -->
-            //                 <img src="https://alwessilholding.com/wp-content/uploads/elementor/thumbs/white-logo-without-bg-rcstibzjkvfhqjzwzokn5khk5v46zznyb6bizwhx3s.png" 
-            //                 alt="Company Logo" style="height:40px; vertical-align:middle; margin-right:8px;">
-            //               </td>
-            //               <td style="text-align:right; font-size:12px;">
-            //               Self Service
-            //               </td>
-            //             </tr>
-            //           </table>
-            //         </td>
-            //       </tr>
-        
-            //       <tr>
-            //         <td style="padding:24px;">
-            //           <h1 style="margin:0 0 8px 0; font-size:20px; color:#333;">
-            //       <strong>${formDef.displayName || formKey}</strong>
-            //     </h1>
-
-            //      <p style="margin:0 0 16px 0; color:#555; font-size:14px;">
-            //      A new request has been submitted and needs your review.
-            //      </p>
-            
-
-            //           <h3 style="margin:16px 0 8px 0; font-size:16px; color:#333;">Employee Details</h3>
-            //           <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse:collapse; font-size:14px;">
-            //             <tr>
-            //               <td style="border:1px solid #ddd; font-weight:bold; width:30%;">Employee</td>
-            //               <td style="border:1px solid #ddd;">${requesterName} (${requesterEmail})</td>
-            //             </tr>
-            //             <tr>
-            //               <td style="border:1px solid #ddd; font-weight:bold;">Department</td>
-            //               <td style="border:1px solid #ddd;">${employee.department || "-"}</td>
-            //             </tr>
-            //           </table>
-        
-            //           <h3 style="margin:16px 0 8px 0; font-size:16px; color:#333;">Request Details</h3>
-            //           <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse:collapse; font-size:14px;">
-            //             ${Object.entries(answers || {})
-            //               .map(
-            //                 ([k, v]) => `
-            //                   <tr>
-            //                     <td style="border:1px solid #ddd; font-weight:bold; width:30%;">${k}</td>
-            //                     <td style="border:1px solid #ddd;">${prettyValue(v)}</td>
-            //                   </tr>
-            //                 `
-            //               )
-            //               .join("")}
-            //           </table>
-        
-            //           <p style="margin-top:24px; font-size:12px; color:#999; text-align:center;">
-            //             This is an automated email from the Al Wessil HR workflow system.
-            //           </p>
-            //         </td>
-            //       </tr>
-            //     </table>
-            //   </div>
-            // `;
-        
             await sendEmail({
               to: firstApprover.email,
               subject: `Approval required: ${formDef.displayName || formKey} - Step 1`,
-              body: emailBody, // plain text (fallback)
+              body: emailBody,  // plain text (fallback)
               html,            // 🎨 design wala
             });
         

@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-
+const { HBS_DB} = require("../../database/connect");
 const userSchema = new mongoose.Schema(
   {
     name: {
@@ -31,6 +31,6 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-const User = mongoose.model("User", userSchema);
+const User = HBS_DB.model("User", userSchema);
 
 module.exports = User;

@@ -1,5 +1,6 @@
 // models/Form.js
 const mongoose = require("mongoose");
+const { HR_DB } = require("../../database/connect");
 
 const FieldSchema = new mongoose.Schema(
   {
@@ -32,4 +33,4 @@ const FormSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Form", FormSchema);
+module.exports = HR_DB.model("Form", FormSchema);

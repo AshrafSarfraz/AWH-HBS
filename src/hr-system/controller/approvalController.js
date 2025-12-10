@@ -1,6 +1,4 @@
-// src/hr-system/controller/approvalController.js
 const ApprovalFlow = require("../models/ApprovalFlow");
-// sendEmail should send plain emails. dummy OK for now.
 const sendEmail = require("../utils/sendEmail");
 
 /**

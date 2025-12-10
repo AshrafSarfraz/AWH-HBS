@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-
+const { HR_DB } = require("../../database/connect");
 // single submission instance going through approvals
 const ApprovalFlowSchema = new mongoose.Schema(
   {
@@ -37,4 +37,4 @@ const ApprovalFlowSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("ApprovalFlow", ApprovalFlowSchema);
+module.exports = HR_DB.model("ApprovalFlow", ApprovalFlowSchema);
