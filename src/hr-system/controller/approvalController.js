@@ -76,6 +76,23 @@ async function getFlowStatus(req, res) {
  * email se approver click karega
  */
 
+// DELETE /api/approvals/:flowId
+async function deleteFlow(req, res) {
+  try {
+    const { flowId } = req.params;
+    const deleted = await ApprovalFlow.findByIdAndDelete(flowId);
+
+    if (!deleted) {
+      return res.status(404).json({ error: "Flow not found" });
+    }
+
+    return res.json({ success: true, message: "Flow deleted successfully" });
+  } catch (err) {
+    console.error("deleteFlow error", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 
 async function handleApprovalAction(req, res) {
   try {
@@ -435,5 +452,6 @@ module.exports = {
   handleApprovalAction,
   getPendingForApprover,
   getAllApprovals,
+  deleteFlow
 };
 

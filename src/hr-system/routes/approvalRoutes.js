@@ -32,7 +32,8 @@ const {
   handleApprovalAction,
   getMyRequests,
   getPendingForApprover,
-  getAllApprovals,        // 👈 import karo
+  getAllApprovals, 
+  deleteFlow,     // 👈 import karo
 } = require("../controller/approvalController");
 
 // -----------------------------------
@@ -49,5 +50,6 @@ router.get("/all", getAllApprovals);
 // -----------------------------------
 router.get("/:flowId/action", handleApprovalAction);
 router.get("/:flowId", getFlowStatus);
+router.delete("/:flowId", deleteFlow);
 
 module.exports = router;
