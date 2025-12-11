@@ -31,7 +31,7 @@ const vendorRoutes = require("./src/hbs/routes/venderAccountRoute");
 // ----------------- MIDDLEWARES -----------------
 app.use(
   cors({
-    origin: [ "http://localhost:5173",  "http://127.0.0.1:5173", "https://al-wessilholding.com", ],
+    origin: [ "http://localhost:5173",  "http://127.0.0.1:5173", "https://al-wessilholding.com", "https://halab-saudi.vercel.app/"],
     credentials: true,
   })
 );
@@ -66,7 +66,6 @@ app.use("/api/approvals", approvalRoutes);
 // same external routes ko /auth aur /api/hbs dono base paths par mount kiya hua hai
 app.use("/auth", hbsExternalRoutes);
 app.use("/api/hbs", hbsExternalRoutes);
-
 
 
 app.use("/api/phoneAuth", phoneAuthRoutes);

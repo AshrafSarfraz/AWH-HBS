@@ -192,7 +192,7 @@ exports.registerUser = async (req, res) => {
     if (!name || !email || !phone) {
       return res
         .status(400)
-        .json({ message: "name, email, phone required hain" });
+        .json({ message: "name, email, phone is required" });
     }
 
     const normalizedEmail = email.toLowerCase().trim();
@@ -255,7 +255,7 @@ exports.requestOtp = async (req, res) => {
     if (user.lastOtpSentAt) {
       const diff = now - user.lastOtpSentAt.getTime();
       if (diff < OTP_RESEND_COOLDOWN_MS) {
-        const remaining = Math.ceil((OTP_RESEND_COOLDOWN_MS - diff) / 1000);
+        const remaining = Math.ceil((OTP_RESEND_COOLDOWN_MS - diff) / 2000);
         return res.status(429).json({
           message: `Please wait ${remaining} seconds before requesting a new OTP`,
         });
@@ -273,7 +273,7 @@ exports.requestOtp = async (req, res) => {
     try {
       await sendWhatsAppOtp(normalizedPhone, otp);
     } catch (e) {
-      console.error("Telebu OTP send failed:", e?.response?.data || e.message);
+      console.error("Hala B Saudi OTP send failed:", e?.response?.data || e.message);
       return res
         .status(500)
         .json({ message: "Failed to send OTP via WhatsApp" });
