@@ -15,6 +15,7 @@ const approvalRoutes = require("./src/hr-system/routes/approvalRoutes");
 const managerRoutes = require("./src/hr-system/routes/managerRoutes");
 
 // Hala B Saudi (external API / redeem)
+const hbsExternalLoginApi = require("./src/hbs/routes/loginRoute");
 const hbsExternalRoutes = require("./src/hbs/routes/externalApi/Brands_RedeemRoutes");
 const phoneAuthRoutes = require("./src/hbs/routes/phoneAuth");
 const AdminRoutes = require("./src/hbs/routes/adminRoutes");
@@ -64,7 +65,7 @@ app.use("/api/approvals", approvalRoutes);
 
 // Hala B Saudi
 // same external routes ko /auth aur /api/hbs dono base paths par mount kiya hua hai
-app.use("/auth", hbsExternalRoutes);
+app.use("/auth", hbsExternalLoginApi);
 app.use("/api/hbs", hbsExternalRoutes);
 
 
