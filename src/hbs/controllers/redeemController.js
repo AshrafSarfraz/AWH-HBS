@@ -1,13 +1,42 @@
 // controllers/couponController.js
 const Coupon = require("../models/redeem");
 
+
 // CREATE – POST /api/coupons
 exports.createCoupon = async (req, res) => {
   try {
+    const { userId, brandId, date } = req.body;
+
+    // basic validation
+    if (!userId || !brandId || !date) {
+      return res.status(400).json({
+        success: false,
+        message: "userId, brandId, and date are required",
+      });
+    }
+
+    // ✅ check if already redeemed today for this brand
+    const already = await Coupon.findOne({ userId, brandId, date });
+    if (already) {
+      return res.status(409).json({
+        success: false,
+        message: "You already redeemed this brand today.",
+      });
+    }
+
     const coupon = new Coupon(req.body);
     const saved = await coupon.save();
-    res.status(201).json(saved);
+
+    res.status(201).json({ success: true, data: saved });
   } catch (err) {
+    // ✅ handle duplicate key error from unique index
+    if (err.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "You already redeemed this brand today.",
+      });
+    }
+
     console.error("Create coupon error:", err);
     res.status(400).json({
       success: false,
@@ -16,6 +45,7 @@ exports.createCoupon = async (req, res) => {
     });
   }
 };
+
 
 // READ ALL – GET /api/coupons
 exports.getAllCoupons = async (req, res) => {
