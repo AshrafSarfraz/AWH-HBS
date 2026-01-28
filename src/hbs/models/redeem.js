@@ -17,7 +17,7 @@ const RedeemSchema = new mongoose.Schema(
 
     userId: { type: String, required: true },
 
-    // createdAt: String
+    createdAt: String
   },
   {
     collection: "H-Redeem",
