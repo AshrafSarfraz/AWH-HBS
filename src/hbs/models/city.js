@@ -11,7 +11,7 @@ const CitySchema = new mongoose.Schema(
   },
   {
     collection: "H-Cities",
-    timestamps: false
+    timestamps: true
   }
 );
 

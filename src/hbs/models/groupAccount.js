@@ -28,7 +28,7 @@ const GroupAccountSchema = new mongoose.Schema(
   },
   {
     collection: "H-Group-Accounts",
-    timestamps: false,
+    timestamps: true,
   }
 );
 

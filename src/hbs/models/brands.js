@@ -86,7 +86,7 @@ const BrandSchema = new mongoose.Schema(
   },
   {
     collection: "H-Brands",
-    timestamps: false,
+    timestamps: true,
   }
 );
 

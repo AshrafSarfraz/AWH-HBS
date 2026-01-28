@@ -27,7 +27,7 @@ const GroupBrandSchema = new mongoose.Schema(
   },
   {
     collection: "H-GroupBrands", // 👈 yahan WOH naam likho jo Mongo me actual collection ka hai
-    timestamps: false
+    timestamps: true
   }
 );
 

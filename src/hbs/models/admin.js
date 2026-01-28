@@ -32,7 +32,7 @@ const AdminSchema = new mongoose.Schema(
   },
   {
     collection: 'H-Admins', // use your exact collection name
-    timestamps: false,      // you already have "time", so no need for createdAt/updatedAt
+    timestamps: true,      // you already have "time", so no need for createdAt/updatedAt
   }
 );
 

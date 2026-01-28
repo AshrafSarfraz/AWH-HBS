@@ -13,7 +13,7 @@ const VendorSchema = new mongoose.Schema(
   },
   {
     collection: "H-Vender_Account", // 👈 collection name tumhari choice
-    timestamps: false
+    timestamps: true,
   }
 );
 
