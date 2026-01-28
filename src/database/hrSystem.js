@@ -9,10 +9,10 @@ const { HR_DB } = require('../database/connect');
 
 
 const sqlConfig = {
-  user: 'AlWessil',
-  password: 'P@ssw0rd1',
-  server: '10.1.1.103',
-  database: 'EmployeeDB',
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  server: process.env.DB_SERVER,
+  database: process.env.DB_NAME,
   options: { encrypt: false, trustServerCertificate: true }
 };
 
