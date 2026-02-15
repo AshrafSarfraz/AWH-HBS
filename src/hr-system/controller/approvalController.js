@@ -23,6 +23,7 @@ async function getMyRequests(req, res) {
         createdAt: 1,
         approvals: 1,
         currentStep: 1,
+        printedStatus: 1,
       }
     )
       .sort({ createdAt: -1 })
@@ -35,6 +36,7 @@ async function getMyRequests(req, res) {
       status: f.status, // "Pending" | "Approved" | "Rejected"
       createdAt: f.createdAt,
       currentStep: f.currentStep,
+      printedStatus: f.printedStatus || "No",
       approvals: (f.approvals || []).map((a) => ({
         role: a.role,
         name: a.name,
@@ -407,6 +409,7 @@ async function getAllApprovals(req, res) {
         requesterName: 1,
         requesterEmail: 1,
         formDataPayload: 1, 
+        printedStatus: 1, // ✅ add
       }
     )
       .sort({ createdAt: -1 })
@@ -451,16 +454,22 @@ async function markPrinted(req, res) {
   try {
     const { flowId } = req.params;
 
-    const flow = await ApprovalFlow.findById(flowId);
+    const flow = await ApprovalFlow.findByIdAndUpdate(
+      flowId,
+      { printedStatus: "Yes" },
+      { new: true }   // updated document return karega
+    );
+
     if (!flow) {
       return res.status(404).json({ error: "Flow not found" });
     }
 
-    // mark as printed
-    flow.printedStatus = "Yes";
-    await flow.save();
+    return res.json({
+      success: true,
+      message: "Printed status updated ✅",
+      printedStatus: flow.printedStatus,
+    });
 
-    return res.json({ success: true, message: "Printed status updated ✅", printedStatus: flow.printedStatus });
   } catch (err) {
     console.error("markPrinted error:", err);
     return res.status(500).json({ error: err.message });

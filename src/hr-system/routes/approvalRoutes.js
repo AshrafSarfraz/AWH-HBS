@@ -21,7 +21,7 @@ router.get("/", getPendingForApprover);
 
 // 👇 yeh add karo — ALL APPROVALS
 router.get("/all", getAllApprovals);
-router.get("/markPrinted", markPrinted);
+router.put("/:flowId/printed", markPrinted);
 // -----------------------------------
 // DYNAMIC ROUTES LAST
 // -----------------------------------
