@@ -15,6 +15,14 @@ const ApprovalFlowSchema = new mongoose.Schema(
       default: "Pending",
       enum: ["Pending", "Approved", "Rejected"],
     },
+    
+    printedStatus: { // ✅ your new field
+      type: String,
+      default: "No",
+      enum: ["Yes", "No"],
+    },
+
+
 
     approvals: [
       {

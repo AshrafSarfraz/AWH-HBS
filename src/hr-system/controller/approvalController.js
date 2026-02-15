@@ -71,10 +71,8 @@ async function getFlowStatus(req, res) {
   }
 }
 
-/**
- * GET /api/approvals/:flowId/action?step=1&decision=approve&comment=ok
- * email se approver click karega
- */
+
+
 
 // DELETE /api/approvals/:flowId
 async function deleteFlow(req, res) {
@@ -444,6 +442,32 @@ async function getAllApprovals(req, res) {
 }
 
 
+/**
+ * PUT /api/approvals/:flowId/printed
+ * HR clicks "Yes, I printed" → update the printedStatus field
+ */
+async function markPrinted(req, res) {
+  try {
+    const { flowId } = req.params;
+
+    const flow = await ApprovalFlow.findById(flowId);
+    if (!flow) {
+      return res.status(404).json({ error: "Flow not found" });
+    }
+
+    // mark as printed
+    flow.printedStatus = "Yes";
+    await flow.save();
+
+    return res.json({ success: true, message: "Printed status updated ✅", printedStatus: flow.printedStatus });
+  } catch (err) {
+    console.error("markPrinted error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+
+
 
 
 module.exports = {
@@ -452,6 +476,7 @@ module.exports = {
   handleApprovalAction,
   getPendingForApprover,
   getAllApprovals,
-  deleteFlow
+  deleteFlow,
+  markPrinted, // ✅ new
 };
 
