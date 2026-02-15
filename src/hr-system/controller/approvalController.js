@@ -418,6 +418,7 @@ async function getAllApprovals(req, res) {
       status: f.status,
       createdAt: f.createdAt,
       currentStep: f.currentStep,
+      printedStatus: f.printedStatus || "No",
       requester: {
         name: f.requesterName,
         email: f.requesterEmail,
