@@ -2,14 +2,12 @@
 const axios = require("axios");
 
 // Telebu config – apne credentials ke hisaab se
-const TELEBU_URL =
-  "https://apisocial.telebu.com/whatsapp-api/v1.0/customer/122657/bot/0b628e83bde64159/template";
+const TELEBU_URL =process.env.TELEBU_URL
 
-const TELEBU_AUTH =
-  "Basic 4c42b91f-8273-4436-9874-fadc8d7f2ba5-Ip8zMWG"; // yahi jo tumne diya
+const TELEBU_AUTH =process.env.TELEBU_AUTH
 
-const TEMPLATE_NAME = "otpauth";
-const TEMPLATE_NAMESPACE = "d4107338_d260_4b73_bb27_fb08d0a4d286";
+const TEMPLATE_NAME = process.env.TEMPLATE_NAME
+const TEMPLATE_NAMESPACE = process.env.TEMPLATE_NAMESPACE
 const TEMPLATE_LANG_CODE = "en_US";
 
 async function sendWhatsAppOtp(phoneNumber, otpCode) {
@@ -60,3 +58,6 @@ async function sendWhatsAppOtp(phoneNumber, otpCode) {
 module.exports = {
   sendWhatsAppOtp,
 };
+
+
+
