@@ -3,6 +3,10 @@ const app = express();
 const cors = require("cors");
 require("dotenv").config();
 const path = require("path");
+// Correct relative path from index.js
+const notificationRoutes = require("./src/hbs/Notifications/notificationRoutes");
+
+
 
 // Fetch Data From Dolphin
 const { router: employeeRouter, startEmployeeCron } = require("./src/database/hrSystem");
@@ -38,6 +42,9 @@ app.use(
 );
 
 app.use(express.json());
+
+app.use("/api/notifications", notificationRoutes);
+
 
 // ----------------- HEALTH CHECKS -----------------
 app.get("/health", (req, res) => {
