@@ -2,8 +2,8 @@ const fetch = require('node-fetch');
 const path = require('path');
 const getAccessToken = require('./getAccessToken'); // Import the helper
 
-const serviceAcount = require('./serviceAccountKey.json')
-const PROJECT_ID = process.env.FCM_PROJECT_ID; // Use environment variable for project ID
+
+const PROJECT_ID = process.env.FIREBASE_PROJECT_ID // Use environment variable for project ID
 
 async function sendNotificationREST(token, title, body) {
   const accessToken = await getAccessToken(); // Call the token helper
