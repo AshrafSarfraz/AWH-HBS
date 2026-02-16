@@ -60,3 +60,7 @@ coverage/
 *.bak
 *.tmp
 
+echo "src/hbs/Notifications/serviceAccountKey.json" >> .gitignore
+git add .gitignore
+git commit -m "Ignore serviceAccountKey.json"
+src/hbs/Notifications/serviceAccountKey.json
