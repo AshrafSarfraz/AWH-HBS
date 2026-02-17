@@ -6,7 +6,11 @@ const VenueSchema = new mongoose.Schema(
   {
     venueNameAr: { type: String, trim: true }, // "بلاس فاندوم"
     venueName:   { type: String, trim: true }, // "Place Vendôme"
+    
+    longitude: { type: Number, required: true },
+    latitude:  { type: Number, required: true },
 
+  
     city:    { type: String, trim: true },     // "Doha"
     country: { type: String, trim: true },     // "qatar"
 

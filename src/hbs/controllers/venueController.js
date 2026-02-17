@@ -8,7 +8,15 @@ const { uploadToFirebase } = require("../utils/firebaseupload"); // path: src/hb
 // - img: single file (handled by multer in uploadVenueFile)
 exports.createVenue = async (req, res) => {
   try {
-    const { venueNameAr, venueName, city, country, time } = req.body;
+    const {
+      venueNameAr,
+      venueName,
+      city,
+      country,
+      time,
+      longitude,
+      latitude,
+    } = req.body;
 
     if (!venueName && !venueNameAr) {
       return res.status(400).json({
@@ -19,9 +27,8 @@ exports.createVenue = async (req, res) => {
 
     let imgUrl = null;
 
-    // agar file aayi hai, to Firebase pe upload karo
     if (req.file) {
-      imgUrl = await uploadToFirebase(req.file, "venues"); // "venues" folder bucket me
+      imgUrl = await uploadToFirebase(req.file, "venues");
     }
 
     const venue = new Venue({
@@ -29,7 +36,9 @@ exports.createVenue = async (req, res) => {
       venueName,
       city,
       country,
-      img: imgUrl, // Firebase ka public URL
+      longitude: longitude ? parseFloat(longitude) : undefined,
+      latitude: latitude ? parseFloat(latitude) : undefined,
+      img: imgUrl,
       time: time || new Date(),
     });
 
@@ -97,9 +106,16 @@ exports.getVenueById = async (req, res) => {
 // - agar nayi img aati hai -> Firebase pe upload karke purani replace
 exports.updateVenue = async (req, res) => {
   try {
-    const { venueNameAr, venueName, city, country, time } = req.body;
+    const {
+      venueNameAr,
+      venueName,
+      city,
+      country,
+      time,
+      longitude,
+      latitude,
+    } = req.body;
 
-    // sirf wohi fields set karenge jo defined hain
     const updateData = {};
 
     if (venueNameAr !== undefined) updateData.venueNameAr = venueNameAr;
@@ -108,16 +124,25 @@ exports.updateVenue = async (req, res) => {
     if (country !== undefined) updateData.country = country;
     if (time !== undefined) updateData.time = time;
 
-    // agar nayi image aayi hai
+    if (longitude !== undefined)
+      updateData.longitude = parseFloat(longitude);
+
+    if (latitude !== undefined)
+      updateData.latitude = parseFloat(latitude);
+
     if (req.file) {
       const imgUrl = await uploadToFirebase(req.file, "venues");
       updateData.img = imgUrl;
     }
 
-    const updated = await Venue.findByIdAndUpdate(req.params.id, updateData, {
-      new: true,
-      runValidators: true,
-    });
+    const updated = await Venue.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
 
     if (!updated) {
       return res.status(404).json({
@@ -139,6 +164,7 @@ exports.updateVenue = async (req, res) => {
     });
   }
 };
+
 
 // DELETE /hbs/venues/:id  -> delete venue
 exports.deleteVenue = async (req, res) => {

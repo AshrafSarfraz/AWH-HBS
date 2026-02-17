@@ -13,6 +13,7 @@ const serviceAccount = {
   token_uri: process.env.FIREBASE_TOKEN_URI,
   auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_CERT_URL,
   client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
+  universe_domain:process.env.FIREBASE_UNI_DOMAIN
 };
 
 if (!admin.apps.length) {
@@ -25,4 +26,4 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 const bucket = admin.storage().bucket();
 
-module.exports = { admin, db, bucket };
+module.exports = { admin, db, bucket,serviceAccount };

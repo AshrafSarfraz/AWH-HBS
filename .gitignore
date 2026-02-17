@@ -11,7 +11,7 @@ pnpm-debug.log*
 .env.development.local
 .env.test.local
 .env.production.local
-
+.serviceAccountKey.json
 # Logs
 logs
 *.log
@@ -60,3 +60,8 @@ coverage/
 *.bak
 *.tmp
 
+echo "src/hbs/Notifications/serviceAccountKey.json" >> .gitignore
+git add .gitignore
+git commit -m "Ignore serviceAccountKey.json"
+src/hbs/Notifications/serviceAccountKey.json
+src/hbs/Notifications/serviceAccountKey.json
