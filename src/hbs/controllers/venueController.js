@@ -1,11 +1,7 @@
-// src/hbs/controllers/venueController.js
-
 const Venue = require("../models/venue");
-const { uploadToFirebase } = require("../utils/firebaseupload"); // path: src/hbs/controllers -> src/utils
+const { uploadToFirebase } = require("../utils/firebaseupload");
 
-// POST /hbs/venues  -> naya venue create
-// Expect: form-data (text fields + img file)
-// - img: single file (handled by multer in uploadVenueFile)
+
 exports.createVenue = async (req, res) => {
   try {
     const {
@@ -13,15 +9,22 @@ exports.createVenue = async (req, res) => {
       venueName,
       city,
       country,
-      time,
       longitude,
       latitude,
+      time,
     } = req.body;
 
-    if (!venueName && !venueNameAr) {
+    if (!venueName) {
       return res.status(400).json({
         success: false,
-        message: "venueName ya venueNameAr required hai",
+        message: "venueName required",
+      });
+    }
+
+    if (longitude == null || latitude == null) {
+      return res.status(400).json({
+        success: false,
+        message: "longitude and latitude required",
       });
     }
 
@@ -36,157 +39,159 @@ exports.createVenue = async (req, res) => {
       venueName,
       city,
       country,
-      longitude: longitude ? parseFloat(longitude) : undefined,
-      latitude: latitude ? parseFloat(latitude) : undefined,
+      longitude: parseFloat(longitude),
+      latitude: parseFloat(latitude),
       img: imgUrl,
       time: time || new Date(),
     });
 
     const saved = await venue.save();
 
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
       data: saved,
     });
+
   } catch (err) {
-    console.error("Create venue error:", err);
-    return res.status(500).json({
+
+    console.error(err);
+
+    res.status(500).json({
       success: false,
-      message: "Failed to create venue",
       error: err.message,
     });
+
   }
 };
 
-// GET /hbs/venues  -> saare venues (latest first)
+
+
 exports.getAllVenues = async (req, res) => {
+
   try {
+
     const venues = await Venue.find().sort({ time: -1 });
 
-    return res.json({
+    res.json({
       success: true,
       data: venues,
     });
+
   } catch (err) {
-    console.error("Get all venues error:", err);
-    return res.status(500).json({
+
+    res.status(500).json({
       success: false,
-      message: "Failed to fetch venues",
+      error: err.message,
     });
+
   }
+
 };
 
-// GET /hbs/venues/:id  -> single venue
+
+
 exports.getVenueById = async (req, res) => {
+
   try {
+
     const venue = await Venue.findById(req.params.id);
 
     if (!venue) {
+
       return res.status(404).json({
         success: false,
         message: "Venue not found",
       });
+
     }
 
-    return res.json({
+    res.json({
       success: true,
       data: venue,
     });
+
   } catch (err) {
-    console.error("Get venue by id error:", err);
-    return res.status(400).json({
+
+    res.status(400).json({
       success: false,
-      message: "Invalid ID",
+      error: err.message,
     });
+
   }
+
 };
 
-// PUT /hbs/venues/:id  -> update venue
-// Expect: form-data (text fields + optional new img)
-// - agar nayi img aati hai -> Firebase pe upload karke purani replace
+
+
 exports.updateVenue = async (req, res) => {
+
   try {
-    const {
-      venueNameAr,
-      venueName,
-      city,
-      country,
-      time,
-      longitude,
-      latitude,
-    } = req.body;
 
-    const updateData = {};
+    const updateData = { ...req.body };
 
-    if (venueNameAr !== undefined) updateData.venueNameAr = venueNameAr;
-    if (venueName !== undefined) updateData.venueName = venueName;
-    if (city !== undefined) updateData.city = city;
-    if (country !== undefined) updateData.country = country;
-    if (time !== undefined) updateData.time = time;
+    if (updateData.longitude)
+      updateData.longitude = parseFloat(updateData.longitude);
 
-    if (longitude !== undefined)
-      updateData.longitude = parseFloat(longitude);
+    if (updateData.latitude)
+      updateData.latitude = parseFloat(updateData.latitude);
 
-    if (latitude !== undefined)
-      updateData.latitude = parseFloat(latitude);
 
     if (req.file) {
+
       const imgUrl = await uploadToFirebase(req.file, "venues");
+
       updateData.img = imgUrl;
+
     }
+
 
     const updated = await Venue.findByIdAndUpdate(
+
       req.params.id,
+
       updateData,
-      {
-        new: true,
-        runValidators: true,
-      }
+
+      { new: true }
+
     );
 
-    if (!updated) {
-      return res.status(404).json({
-        success: false,
-        message: "Venue not found",
-      });
-    }
 
-    return res.json({
+    res.json({
       success: true,
       data: updated,
     });
+
   } catch (err) {
-    console.error("Update venue error:", err);
-    return res.status(400).json({
+
+    res.status(400).json({
       success: false,
-      message: "Failed to update venue",
       error: err.message,
     });
+
   }
+
 };
 
 
-// DELETE /hbs/venues/:id  -> delete venue
+
 exports.deleteVenue = async (req, res) => {
+
   try {
-    const deleted = await Venue.findByIdAndDelete(req.params.id);
 
-    if (!deleted) {
-      return res.status(404).json({
-        success: false,
-        message: "Venue not found",
-      });
-    }
+    await Venue.findByIdAndDelete(req.params.id);
 
-    return res.json({
+    res.json({
       success: true,
       message: "Venue deleted",
     });
+
   } catch (err) {
-    console.error("Delete venue error:", err);
-    return res.status(400).json({
+
+    res.status(400).json({
       success: false,
-      message: "Failed to delete venue",
+      error: err.message,
     });
+
   }
+
 };
