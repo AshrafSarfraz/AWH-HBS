@@ -1,4 +1,4 @@
-// authentication/auth.middleware.js
+// /src/hbs/middleware/auth.middleware.js
 const jwt = require("jsonwebtoken");
 const { JWT_SECRET } = require("../controllers/externalApi/login.controller");
 

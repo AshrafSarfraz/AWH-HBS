@@ -51,6 +51,7 @@ router.post("/send-venue-notification", async (req, res) => {
     console.error(err);
     res.status(500).json({ error: err.message });
   }
+
 });
 
 module.exports = router;

@@ -1,3 +1,4 @@
+// /src/hbs/utils/generateToken.js
 const jwt = require("jsonwebtoken");
 
 const generateToken = (user) => {

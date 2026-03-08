@@ -28,9 +28,13 @@
     "node-cron": "^4.2.1",
     "node-fetch": "^2.7.0",
     "nodemailer": "^7.0.10",
+    "socket.io": "^4.8.3",
     "twilio": "^5.10.6"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "@types/node": "^25.3.2",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
   }
 }

@@ -1,6 +1,4 @@
-
-
-// models/User.js
+// /src/hbs/models/User.js
 const mongoose = require("mongoose");
 const { HBS_DB } = require("../../database/connect");
 
