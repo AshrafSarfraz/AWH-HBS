@@ -43,7 +43,7 @@ app.use(
 
 app.use(express.json());
 
-app.use("/api/notifications", notificationRoutes);
+app.use("/api/hbs", notificationRoutes);
 
 
 // ----------------- HEALTH CHECKS -----------------
