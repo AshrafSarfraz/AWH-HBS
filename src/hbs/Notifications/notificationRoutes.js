@@ -23,7 +23,7 @@ router.post("/send-venue-notification", async (req, res) => {
     }
 
     const today = new Date().toISOString().slice(0, 10);
-    const radius = 2000;
+    const radius = 1000;
 
     const venues = await Venue.find();
 
@@ -140,7 +140,49 @@ router.post("/send-venue-notification", async (req, res) => {
   }
 });
 
+router.post("/reset-venue-notification-test", async (req, res) => {
+  try {
+    const { token, venueId } = req.body;
+
+    if (!token) {
+      return res.status(400).json({ error: "token required" });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const query = { token, date: today };
+
+    if (venueId) {
+      query.venueId = venueId;
+    }
+
+    const result = await VenueNotificationLog.deleteMany(query);
+
+    return res.json({
+      success: true,
+      message: "Testing log reset successful",
+      deletedCount: result.deletedCount,
+      today,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 // const express = require("express");

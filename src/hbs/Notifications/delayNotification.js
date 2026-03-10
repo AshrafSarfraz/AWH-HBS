@@ -13,14 +13,28 @@ async function sendNotification(token, title, body, extraData = {}) {
     body: String(body || ""),
   };
 
-  const message = {
-    message: {
-      token: String(token),
-      notification: { title, body },
-      data: dataPayload,
-      android: { priority: "HIGH" },
+const message = {
+  message: {
+    token: String(token),
+    notification: { title, body },
+    data: dataPayload,
+
+    android: {
+      priority: "HIGH",
     },
-  };
+
+    apns: {
+      headers: {
+        "apns-priority": "10",
+      },
+      payload: {
+        aps: {
+          sound: "default",
+        },
+      },
+    },
+  },
+};
 
   const response = await fetch(
     `https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`,
