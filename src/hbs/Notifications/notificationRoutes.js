@@ -11,8 +11,8 @@ router.post("/send-venue-notification", async (req, res) => {
   try {
     const { token, userLatitude, userLongitude, userId } = req.body;
 
-    if (!userId || !token || userLatitude == null || userLongitude == null) {
-      return res.status(400).json({ error: "Missing data (userId/token/lat/lng)" });
+    if (!token || userLatitude == null || userLongitude == null) {
+      return res.status(400).json({ error: "Missing data (token/lat/lng)" });
     }
 
     const uLat = parseFloat(userLatitude);
@@ -27,13 +27,14 @@ router.post("/send-venue-notification", async (req, res) => {
 
     const venues = await Venue.find();
 
-    // ✅ Find nearest venue within radius (ONLY ONE)
+    // Find nearest venue within radius (ONLY ONE)
     let nearestVenue = null;
     let nearestDistance = Infinity;
 
     for (const venue of venues) {
       const vLat = parseFloat(venue.latitude);
       const vLng = parseFloat(venue.longitude);
+
       if (!Number.isFinite(vLat) || !Number.isFinite(vLng)) continue;
 
       const distance = geolib.getDistance(
@@ -56,9 +57,9 @@ router.post("/send-venue-notification", async (req, res) => {
       });
     }
 
-    // ✅ Check if user already got notification for this venue today
+    // Check if this device/token already got notification for this venue today
     const alreadyNotified = await VenueNotificationLog.findOne({
-      userId,
+      token,
       venueId: nearestVenue._id,
       date: today,
     });
@@ -66,7 +67,7 @@ router.post("/send-venue-notification", async (req, res) => {
     if (alreadyNotified) {
       return res.json({
         success: true,
-        message: "Already notified for this venue today.",
+        message: "Already notified on this device for this venue today.",
         today,
         venueId: nearestVenue._id,
         venueName: nearestVenue.venueName,
@@ -74,7 +75,7 @@ router.post("/send-venue-notification", async (req, res) => {
       });
     }
 
-    // ✅ Send notification
+    // Send notification
     const title = "Hala B Saudi";
     const body = `You're near ${nearestVenue.venueName || "our venue"}! Tap to unlock exclusive discounts with Hala B Saudi.`;
 
@@ -88,9 +89,9 @@ router.post("/send-venue-notification", async (req, res) => {
         venueId: nearestVenue._id,
       });
 
-      // ✅ Create log AFTER successful send
+      // Create log AFTER successful send
       await VenueNotificationLog.create({
-        userId,
+        token,
         venueId: nearestVenue._id,
         date: today,
       });
@@ -99,7 +100,7 @@ router.post("/send-venue-notification", async (req, res) => {
       errorMessage = err.message || "Unknown error";
     }
 
-    // ✅ Store notification (success OR fail)
+    // Store notification (success OR fail)
     await Notification.create({
       userId,
       token,
@@ -123,7 +124,7 @@ router.post("/send-venue-notification", async (req, res) => {
       success: true,
       message:
         status === "SENT"
-          ? "Notification sent (1 per venue per day)."
+          ? "Notification sent (1 per device per venue per day)."
           : "Notification failed.",
       today,
       sentNow: status === "SENT" ? 1 : 0,
@@ -142,28 +143,21 @@ router.post("/send-venue-notification", async (req, res) => {
 module.exports = router;
 
 
-
-
-
-
-
-
 // const express = require("express");
 // const router = express.Router();
 // const Venue = require("../models/venue");
 // const geolib = require("geolib");
 // const sendDelayedNotification = require("./delayNotification");
 
-// // ✅ Per device per day limit (memory)
-// const dailyCount = {}; 
-// // dailyCount[token] = { date: "YYYY-MM-DD", count: number }
+// const Notification = require("../models/locationbasedNotification/NotificationVenue");
+// const VenueNotificationLog = require("../models/locationbasedNotification/VenueNotificationLog");
 
 // router.post("/send-venue-notification", async (req, res) => {
 //   try {
-//     const { token, userLatitude, userLongitude } = req.body;
+//     const { token, userLatitude, userLongitude, userId } = req.body;
 
-//     if (!token || userLatitude == null || userLongitude == null) {
-//       return res.status(400).json({ error: "Missing data" });
+//     if (!userId || !token || userLatitude == null || userLongitude == null) {
+//       return res.status(400).json({ error: "Missing data (userId/token/lat/lng)" });
 //     }
 
 //     const uLat = parseFloat(userLatitude);
@@ -173,36 +167,16 @@ module.exports = router;
 //       return res.status(400).json({ error: "Invalid userLatitude/userLongitude" });
 //     }
 
-//     // ✅ daily limit set here
-//     const DAILY_LIMIT = 100;
-
-//     // ✅ Today key
 //     const today = new Date().toISOString().slice(0, 10);
-
-//     // init/reset per day
-//     if (!dailyCount[token] || dailyCount[token].date !== today) {
-//       dailyCount[token] = { date: today, count: 0 };
-//     }
-
-//     // limit already reached
-//     if (dailyCount[token].count >= DAILY_LIMIT) {
-//       return res.json({
-//         success: true,
-//         message: `Daily limit reached (${DAILY_LIMIT} notifications).`,
-//         today,
-//       });
-//     }
-
-//     const venues = await Venue.find();
 //     const radius = 2000;
 
-//     let sentNow = 0;
+//     const venues = await Venue.find();
+
+//     // ✅ Find nearest venue within radius (ONLY ONE)
+//     let nearestVenue = null;
+//     let nearestDistance = Infinity;
 
 //     for (const venue of venues) {
-//       // stop if limit reached
-//       if (dailyCount[token].count >= DAILY_LIMIT) break;
-
-//       // ✅ validate venue coords
 //       const vLat = parseFloat(venue.latitude);
 //       const vLng = parseFloat(venue.longitude);
 //       if (!Number.isFinite(vLat) || !Number.isFinite(vLng)) continue;
@@ -212,26 +186,97 @@ module.exports = router;
 //         { latitude: vLat, longitude: vLng }
 //       );
 
-//       if (distance <= radius) {
-//         // ✅ send notification + pass venueId so app opens SelectedVenue
-//         await sendDelayedNotification(
-//           token,
-//           "Hala B Saudi",
-//           `You're near ${venue.venueName || "our venue"}! Tap to unlock exclusive discounts with Hala B Saudi.`,
-//           0,
-//           { screen: "SelectedVenue", venueId: venue._id }
-//         );
-        
-
-//         dailyCount[token].count += 1;
-//         sentNow += 1;
+//       if (distance <= radius && distance < nearestDistance) {
+//         nearestVenue = venue;
+//         nearestDistance = distance;
 //       }
 //     }
 
+//     if (!nearestVenue) {
+//       return res.json({
+//         success: true,
+//         message: "No nearby venue found in radius.",
+//         today,
+//         sentNow: 0,
+//       });
+//     }
+
+//     // ✅ Check if user already got notification for this venue today
+//     const alreadyNotified = await VenueNotificationLog.findOne({
+//       userId,
+//       venueId: nearestVenue._id,
+//       date: today,
+//     });
+
+//     if (alreadyNotified) {
+//       return res.json({
+//         success: true,
+//         message: "Already notified for this venue today.",
+//         today,
+//         venueId: nearestVenue._id,
+//         venueName: nearestVenue.venueName,
+//         sentNow: 0,
+//       });
+//     }
+
+//     // ✅ Send notification
+//     const title = "Hala B Saudi";
+//     const body = `You're near ${nearestVenue.venueName || "our venue"}! Tap to unlock exclusive discounts with Hala B Saudi.`;
+
+//     let fcmResult = {};
+//     let status = "SENT";
+//     let errorMessage = "";
+
+//     try {
+//       fcmResult = await sendDelayedNotification(token, title, body, 0, {
+//         screen: "SelectedVenue",
+//         venueId: nearestVenue._id,
+//       });
+
+//       // ✅ Create log AFTER successful send
+//       await VenueNotificationLog.create({
+//         userId,
+//         venueId: nearestVenue._id,
+//         date: today,
+//       });
+//     } catch (err) {
+//       status = "FAILED";
+//       errorMessage = err.message || "Unknown error";
+//     }
+
+//     // ✅ Store notification (success OR fail)
+//     await Notification.create({
+//       userId,
+//       token,
+//       title,
+//       body,
+//       screen: "SelectedVenue",
+//       venueId: nearestVenue._id,
+
+//       userLatitude: uLat,
+//       userLongitude: uLng,
+//       venueLatitude: parseFloat(nearestVenue.latitude),
+//       venueLongitude: parseFloat(nearestVenue.longitude),
+//       distanceMeters: nearestDistance,
+
+//       status,
+//       fcmResponse: fcmResult,
+//       errorMessage,
+//     });
+
 //     return res.json({
 //       success: true,
-//       message: `Sent ${sentNow} notifications now. Total today: ${dailyCount[token].count}/${DAILY_LIMIT}.`,
+//       message:
+//         status === "SENT"
+//           ? "Notification sent (1 per venue per day)."
+//           : "Notification failed.",
 //       today,
+//       sentNow: status === "SENT" ? 1 : 0,
+//       venueId: nearestVenue._id,
+//       venueName: nearestVenue.venueName,
+//       distanceMeters: nearestDistance,
+//       status,
+//       errorMessage,
 //     });
 //   } catch (err) {
 //     console.error("send-venue-notification error:", err);
@@ -240,3 +285,5 @@ module.exports = router;
 // });
 
 // module.exports = router;
+
+

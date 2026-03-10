@@ -46,7 +46,7 @@ async function sendNotification(token, title, body, extraData = {}) {
   return result;
 }
 
-// ✅ delayHours = 0 => send immediately and return result
+// delayHours = 0 => send immediately and return result
 async function sendDelayedNotification(token, title, body, delayHours = 0, extraData = {}) {
   const delayMs = delayHours * 60 * 60 * 1000;
 
@@ -72,18 +72,16 @@ module.exports = sendDelayedNotification;
 
 
 
-// const getAccessToken = require("./getAccessToken");
 
+
+// const getAccessToken = require("./getAccessToken");
 // const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
 
 // async function sendNotification(token, title, body, extraData = {}) {
-//   if (!PROJECT_ID) {
-//     throw new Error("FIREBASE_PROJECT_ID is missing in .env");
-//   }
+//   if (!PROJECT_ID) throw new Error("FIREBASE_PROJECT_ID is missing in .env");
 
 //   const accessToken = await getAccessToken();
 
-//   // ✅ IMPORTANT: data values MUST be strings
 //   const dataPayload = {
 //     screen: String(extraData.screen || "SelectedVenue"),
 //     venueId: String(extraData.venueId || ""),
@@ -96,7 +94,6 @@ module.exports = sendDelayedNotification;
 //       token: String(token),
 //       notification: { title, body },
 //       data: dataPayload,
-//       // ✅ (optional) Android priority
 //       android: { priority: "HIGH" },
 //     },
 //   };
@@ -115,7 +112,6 @@ module.exports = sendDelayedNotification;
 
 //   const result = await response.json().catch(() => ({}));
 
-//   // ✅ DEBUG LOGS (super important)
 //   console.log("FCM status:", response.status);
 //   console.log("FCM result:", JSON.stringify(result));
 
@@ -126,16 +122,27 @@ module.exports = sendDelayedNotification;
 //   return result;
 // }
 
-// function sendDelayedNotification(token, title, body, delayHours = 0, extraData = {}) {
+// // ✅ delayHours = 0 => send immediately and return result
+// async function sendDelayedNotification(token, title, body, delayHours = 0, extraData = {}) {
 //   const delayMs = delayHours * 60 * 60 * 1000;
 
+//   if (delayMs <= 0) {
+//     return await sendNotification(token, title, body, extraData);
+//   }
+
+//   // if delayed: schedule but return a "scheduled" response
 //   setTimeout(async () => {
 //     try {
 //       await sendNotification(token, title, body, extraData);
 //     } catch (err) {
-//       console.error("Failed to send notification:", err.message);
+//       console.error("Failed to send delayed notification:", err.message);
 //     }
 //   }, delayMs);
+
+//   return { scheduled: true, delayMs };
 // }
 
 // module.exports = sendDelayedNotification;
+
+
+
