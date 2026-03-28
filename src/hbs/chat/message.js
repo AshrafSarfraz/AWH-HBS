@@ -25,6 +25,10 @@ const MessageSchema = new Schema(
       enum: ["sent", "delivered", "seen"],
       default: "sent",
     },
+    deleted: {
+  type: Boolean,
+  default: false
+},
   },
   { timestamps: true }
 );

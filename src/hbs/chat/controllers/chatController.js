@@ -17,7 +17,10 @@ async function getChats(req, res) {
 
     const userObjId = new Types.ObjectId(userId); // ✅ Correct
 
-    const chats = await Chat.find({ participants: userObjId })
+    const chats = await Chat.find({
+  participants: userObjId,
+  deletedFor: { $ne: userObjId },
+})
       .populate("participants", "name email avatar")
       .populate("lastMessage")
       .sort({ lastMessageAt: -1 });
@@ -25,12 +28,13 @@ async function getChats(req, res) {
     const formattedChats = chats.map((chat) => {
       // Safety check: ensure participants exist before finding
       const otherParticipant = chat.participants.find(
-        (p) => p._id.toString() !== userId.toString()
-      );
+  (p) => !p._id.equals(userObjId)
+);
+
       
       return {
         _id: chat._id,
-        participant: otherParticipant || null, // Fallback to null
+        participant: otherParticipant || null, 
         lastMessage: chat.lastMessage,
         lastMessageAt: chat.lastMessageAt,
       };
@@ -43,6 +47,8 @@ async function getChats(req, res) {
     res.status(500).json({ error: "Failed to fetch chats" });
   }
 }
+
+
 
 /**
  * POST /api/chat/with/:participantId
@@ -76,7 +82,10 @@ const participantObjId = new mongoose.Types.ObjectId(participantId);
       await chat.populate("participants", "name email avatar");
     }
 
-    const otherParticipant = chat.participants.find(p => p._id.toString() !== userId);
+    const otherParticipant = chat.participants.find(
+  (p) => !p._id.equals(userObjId)
+);
+
 
     res.json({
       _id: chat._id,
@@ -90,7 +99,40 @@ const participantObjId = new mongoose.Types.ObjectId(participantId);
   }
 }
 
+/**
+ * DELETE /api/chat/:chatId
+ * Delete a chat for logged-in user
+ */
+async function deleteChat(req, res) {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    const { chatId } = req.params;
+
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const chat = await Chat.findById(chatId);
+    if (!chat) return res.status(404).json({ error: "Chat not found" });
+
+    const userObjId = new mongoose.Types.ObjectId(userId);
+
+    if (!chat.deletedFor) chat.deletedFor = [];
+
+    if (!chat.deletedFor.some(id => id.equals(userObjId))) {
+      chat.deletedFor.push(userObjId);
+      await chat.save();
+    }
+
+    res.json({ message: "Chat deleted for you", chatId });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Delete failed" });
+  }
+}
+
+
 module.exports = {
   getChats,
   getOrCreateChat,
+  deleteChat,
 };

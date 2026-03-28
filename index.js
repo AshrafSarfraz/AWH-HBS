@@ -34,16 +34,28 @@ const vendorRoutes = require("./src/hbs/routes/venderAccountRoute");
 const chatRoutes = require("./src/hbs/chat/routes/chatRoutes");
 const messageRoutes = require("./src/hbs/chat/routes/messageRoutes");
 
+
+
 // ----------------- MIDDLEWARES -----------------
+// app.use(
+//   cors({
+//     origin: [
+//         "http://192.168.100.3:5173",
+//       "http://localhost:5173",
+//       "http://127.0.0.1:5173",
+//       "https://al-wessilholding.com",
+//       "https://halab-saudi.vercel.app",
+//       "https://hala-b-saudi.onrender.com/",
+      
+    
+//     ],
+  
+//     credentials: true,
+//   })
+// );
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-      "https://al-wessilholding.com",
-      "https://halab-saudi.vercel.app",
-      "https://hala-b-saudi.onrender.com/",
-    ],
+    origin: "*", // Allow all origins for testing
     credentials: true,
   })
 );
@@ -74,6 +86,13 @@ app.use("/api/hbs/redeem", halaredeem);
 app.use("/api/hbs/venues", venueRoutes);
 app.use("/api/hbs/venderAccount", vendorRoutes);
 
+
+// test Route temporar --- remove after test
+const testRoute = require("./src/hbs/Notifications/testRoute");
+app.use("/api/test", testRoute);
+
+
+
 //user routes
 const userRoutes = require("./src/hbs/chat/routes/userRoutes");
 app.use("/api/users", userRoutes);
@@ -82,10 +101,19 @@ app.use("/api/users", userRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/messages", messageRoutes);
 
+// Device routes
+const deviceRoutes = require("./src/hbs/chat/routes/deviceRoutes");
+app.use("/api/devices", deviceRoutes);
+
 // ----------------- HEALTH CHECKS -----------------
 app.get("/", (req, res) => res.send("AWH Backend running ✅. Try /api/health or /health"));
 app.get("/health", (req, res) => res.json({ ok: true }));
 app.get("/api/health", (req, res) => res.json({ ok: true }));
+
+app.get("/api/test", (req, res) => {
+  console.log("API HIT");
+  res.send("working");
+});
 
 // ----------------- SERVER & SOCKET -----------------
 const server = createServer(app);
@@ -94,13 +122,13 @@ const initializeSocket = require("./src/hbs/chat/chatSocket");
 // initialize socket server
 initializeSocket(server);
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+const PORT = process.env.PORT;
+server.listen(PORT,'0.0.0.0', () => {
   console.log("Server running on port", PORT);
   startEmployeeCron();
 // MongoDB connection
 const mongoose = require("mongoose");
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/awh-db";
+const MONGO_URI = process.env.MONGO_URI_HBS;
 
 mongoose.connect(MONGO_URI, {
   useNewUrlParser: true,
