@@ -30,7 +30,14 @@ const groupBrands = require("./src/hbs/routes/brandGroupRoute");
 const halaredeem = require("./src/hbs/routes/redeem");
 const venueRoutes = require("./src/hbs/routes/venueRoutes");
 const vendorRoutes = require("./src/hbs/routes/venderAccountRoute");
+
+
 // Westwalk Family
+const Complain = require("./src/westwalk_Family/routes/complaint");
+const AdminsEmail = require("./src/westwalk_Family/routes/AdminEmail");
+
+
+
 
 
 // ----------------- MIDDLEWARES -----------------
@@ -87,6 +94,10 @@ app.use("/api/hbs/venues", venueRoutes);
 app.use("/api/hbs/venderAccount", vendorRoutes);
 
 // Westwalk Family
+app.use("/api/westwalk/maintainceRequest", Complain);
+app.use("/api/westwalk/admin-emails", AdminsEmail);
+
+
 // yahan future routes add kar sakte ho
 
 

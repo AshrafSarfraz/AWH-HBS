@@ -10,6 +10,11 @@ const HBS_DB = mongoose.createConnection(process.env.MONGO_URI_HBS, {
 
 });
 
+const WESTWALK_DB = mongoose.createConnection(process.env.MONGO_URI_WESTWALK, {
+
+});
+
+
 
 // Example: schema create karo
 const HrUser = HR_DB.model("HrUser", new mongoose.Schema({
@@ -20,7 +25,8 @@ const HbsUser = HBS_DB.model("HbsUser", new mongoose.Schema({
   name: String,
 }));
 
-module.exports = { HR_DB, HBS_DB, HrUser, HbsUser };
+
+module.exports = { HR_DB, HBS_DB, WESTWALK_DB, HrUser, HbsUser };
 
 
 
