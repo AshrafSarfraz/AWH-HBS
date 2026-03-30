@@ -1,0 +1,17 @@
+const express = require("express");
+const router = express.Router();
+const authController = require("../controller/AdminAuth");
+const protect = require("../middleware/Authmiddleware");
+
+
+ 
+// Public routes
+router.post("/register", authController.register);
+router.post("/login", authController.login);
+ 
+// Protected routes
+router.get("/me", protect, authController.getMe);
+router.post("/logout", protect, authController.logout);
+ 
+module.exports = router;
+ 

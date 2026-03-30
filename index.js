@@ -33,6 +33,7 @@ const vendorRoutes = require("./src/hbs/routes/venderAccountRoute");
 
 
 // Westwalk Family
+const AdminsAuth = require("./src/westwalk_Family/routes/AuthRoutes");
 const Complain = require("./src/westwalk_Family/routes/complaint");
 const AdminsEmail = require("./src/westwalk_Family/routes/AdminEmail");
 
@@ -94,6 +95,7 @@ app.use("/api/hbs/venues", venueRoutes);
 app.use("/api/hbs/venderAccount", vendorRoutes);
 
 // Westwalk Family
+app.use("/api/westwalk", AdminsAuth);
 app.use("/api/westwalk/maintainceRequest", Complain);
 app.use("/api/westwalk/admin-emails", AdminsEmail);
 
