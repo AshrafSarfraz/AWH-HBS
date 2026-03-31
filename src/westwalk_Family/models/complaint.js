@@ -56,4 +56,4 @@ const ComplaintSchema = new mongoose.Schema(
   }
 );
 
-module.exports = WESTWALK_DB.model('Complaint', ComplaintSchema);
+module.exports = WESTWALK_DB.model('Complaints', ComplaintSchema);

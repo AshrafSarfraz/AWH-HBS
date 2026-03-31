@@ -1,5 +1,5 @@
 // controllers/HComplaintController.js
-const Complaint = require("../models/Complaint"); // ✅ Fixed — correct model filename
+const Complaint = require("../models/complaint"); // ✅ Fixed — correct model filename
 const { uploadToFirebase } = require("../../database/firebase");
 const {
   sendEmail,
