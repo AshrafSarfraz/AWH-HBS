@@ -7,7 +7,7 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
 const signToken = (userId) =>
   jwt.sign({ id: userId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 
-// POST /api/auth/register
+// ------------------ REGISTER ------------------
 exports.register = async (req, res) => {
   const { name, email, password } = req.body;
 
@@ -34,7 +34,7 @@ exports.register = async (req, res) => {
   }
 };
 
-// POST /api/auth/login
+// ------------------ LOGIN ------------------
 exports.login = async (req, res) => {
   const { email, password } = req.body;
 
@@ -60,11 +60,10 @@ exports.login = async (req, res) => {
   }
 };
 
-// GET /api/auth/users/:id  (protected)
+// ------------------ GET ALL USERS ------------------
 exports.getAllUsers = async (req, res) => {
   try {
-    const users = await User.find().select("-password"); // password hide
-
+    const users = await User.find().select("-password");
     res.json({
       count: users.length,
       users,
@@ -74,11 +73,21 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-// PATCH /api/auth/users/:id  (protected)
+// ------------------ GET SINGLE USER ------------------
+exports.getUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    res.json({ user });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+// ------------------ UPDATE USER ------------------
 exports.updateUser = async (req, res) => {
   const ALLOWED_FIELDS = ["name", "email", "password"];
-
-  // Strip out any fields the caller shouldn't be able to change
   const updates = Object.fromEntries(
     Object.entries(req.body).filter(([key]) => ALLOWED_FIELDS.includes(key))
   );
@@ -88,13 +97,12 @@ exports.updateUser = async (req, res) => {
   }
 
   try {
-    // If a new password is supplied, let the pre-save hook hash it
     if (updates.password) {
       const user = await User.findById(req.params.id);
       if (!user) return res.status(404).json({ message: "User not found" });
 
       Object.assign(user, updates);
-      await user.save(); // triggers bcrypt pre-save hook
+      await user.save(); // bcrypt pre-save hook
 
       const { _id, name, email, createdAt } = user;
       return res.json({
@@ -103,7 +111,6 @@ exports.updateUser = async (req, res) => {
       });
     }
 
-    // No password change — use findByIdAndUpdate for efficiency
     const user = await User.findByIdAndUpdate(
       req.params.id,
       { $set: updates },
@@ -121,14 +128,25 @@ exports.updateUser = async (req, res) => {
   }
 };
 
+// ------------------ DELETE USER ------------------
+exports.deleteUser = async (req, res) => {
+  try {
+    const user = await User.findByIdAndDelete(req.params.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-// GET /api/auth/me  (protected)
+    res.json({ message: "User deleted successfully", userId: req.params.id });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+// ------------------ GET ME ------------------
 exports.getMe = (req, res) => {
   const { _id, name, email, createdAt } = req.user;
   res.json({ user: { id: _id, name, email, createdAt } });
 };
 
-// POST /api/auth/logout
+// ------------------ LOGOUT ------------------
 exports.logout = (_req, res) => {
   res.json({ message: "Logged out successfully. Please discard your token." });
 };
