@@ -8,6 +8,9 @@ const protect = require("../middleware/Authmiddleware");
 // Public routes
 router.post("/register", authController.register);
 router.post("/login", authController.login);
+
+router.get("/admin", authController.getAllUsers);
+router.patch("/AdminUser/:id", protect, authController.updateUser);
  
 // Protected routes
 router.get("/me", protect, authController.getMe);

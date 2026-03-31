@@ -60,6 +60,68 @@ exports.login = async (req, res) => {
   }
 };
 
+// GET /api/auth/users/:id  (protected)
+exports.getAllUsers = async (req, res) => {
+  try {
+    const users = await User.find().select("-password"); // password hide
+
+    res.json({
+      count: users.length,
+      users,
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+// PATCH /api/auth/users/:id  (protected)
+exports.updateUser = async (req, res) => {
+  const ALLOWED_FIELDS = ["name", "email", "password"];
+
+  // Strip out any fields the caller shouldn't be able to change
+  const updates = Object.fromEntries(
+    Object.entries(req.body).filter(([key]) => ALLOWED_FIELDS.includes(key))
+  );
+
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ message: "No valid fields provided for update" });
+  }
+
+  try {
+    // If a new password is supplied, let the pre-save hook hash it
+    if (updates.password) {
+      const user = await User.findById(req.params.id);
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      Object.assign(user, updates);
+      await user.save(); // triggers bcrypt pre-save hook
+
+      const { _id, name, email, createdAt } = user;
+      return res.json({
+        message: "User updated successfully",
+        user: { id: _id, name, email, createdAt },
+      });
+    }
+
+    // No password change — use findByIdAndUpdate for efficiency
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { $set: updates },
+      { new: true, runValidators: true }
+    ).select("-password");
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    res.json({
+      message: "User updated successfully",
+      user: { id: user._id, name: user.name, email: user.email, createdAt: user.createdAt },
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+
 // GET /api/auth/me  (protected)
 exports.getMe = (req, res) => {
   const { _id, name, email, createdAt } = req.user;
