@@ -44,7 +44,8 @@ const AdminsEmail = require("./src/westwalk_Family/routes/AdminEmail");
 // ----------------- MIDDLEWARES -----------------
 app.use(
   cors({
-    origin: [ "http://localhost:5173",  "http://127.0.0.1:5173", "https://al-wessilholding.com", "https://halab-saudi.vercel.app", "https://hala-b-saudi.onrender.com/" ],
+    origin: [ "http://localhost:5173",  "http://127.0.0.1:5173", "https://al-wessilholding.com",
+              "https://halab-saudi.vercel.app", "https://hala-b-saudi.onrender.com/", "https://maintenance.westwalk.qa/" ],
     credentials: true,
   })
 );
