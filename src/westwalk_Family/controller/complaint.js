@@ -1,6 +1,6 @@
 // controllers/HComplaintController.js
 const Complaint = require("../models/complaint");
-const { uploadToFirebase } = require("../../database/firebase");
+
 const {
   sendEmail,
   complaintConfirmationEmail,
@@ -8,6 +8,9 @@ const {
   complaintStatusUpdateEmail,
 } = require("../utils/sendEmail");
 const { getActiveAdminEmailList } = require("../utils/AdminEmailService");
+const { W_uploadToFirebase } = require("../utils/W_uploadToFirebase");
+
+
 
 // ─────────────────────────────────────────────
 // HELPER — upload multiple images
@@ -15,7 +18,7 @@ const { getActiveAdminEmailList } = require("../utils/AdminEmailService");
 const uploadImages = async (files) => {
   if (!files || files.length === 0) return [];
   const uploadPromises = files.map((file) =>
-    uploadToFirebase(file, "complaints/images")
+    W_uploadToFirebase(file, "complaints/images")
   );
   return Promise.all(uploadPromises);
 };
