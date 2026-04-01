@@ -10,15 +10,15 @@ const ComplaintSchema = new mongoose.Schema(
       trim: true,
     },
     unitno: {
-        type: String,
-        required: true,
-        trim: true,
-      },
-      buildingno: {
-        type: String,
-        required: true,
-        trim: true,
-      },
+      type: String,
+      required: true,
+      trim: true,
+    },
+    buildingno: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     phoneNumber: {
       type: String,
       required: true,
@@ -40,9 +40,9 @@ const ComplaintSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-    image: {
-      type: String, // Store image URL or file path (e.g., from Cloudinary or local upload)
-      default: null,
+    images: {
+      type: [String], // ✅ array of URLs (was `image: String`)
+      default: [],
     },
     status: {
       type: String,
@@ -52,7 +52,7 @@ const ComplaintSchema = new mongoose.Schema(
   },
   {
     collection: 'Complaints',
-    timestamps: true, // adds createdAt and updatedAt automatically
+    timestamps: true,
   }
 );
 
