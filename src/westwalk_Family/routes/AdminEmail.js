@@ -7,10 +7,11 @@ const {
   updateAdminEmail,
   deleteAdminEmail,
 } = require("../controller/AdminEmail");
+const protect = require("../middleware/Authmiddleware");
 
-router.post(  "/",    addAdminEmail);
-router.get(   "/",    getAdminEmails);
-router.put(   "/:id", updateAdminEmail);
-router.delete("/:id", deleteAdminEmail);
+router.post(  "/",   protect,  addAdminEmail);
+router.get(   "/",   protect,  getAdminEmails);
+router.put(   "/:id", protect, updateAdminEmail);
+router.delete("/:id",  protect, deleteAdminEmail);
 
 module.exports = router;
