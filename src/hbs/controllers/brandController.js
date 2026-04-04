@@ -314,5 +314,8 @@ exports.deleteBrand = async (req, res) => {
       message: "Error deleting brand",
       error: err.message,
     });
+
+
+    
   }
 };

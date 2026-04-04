@@ -30,9 +30,19 @@ const halaredeem = require("./src/hbs/routes/redeem");
 const venueRoutes = require("./src/hbs/routes/venueRoutes");
 const vendorRoutes = require("./src/hbs/routes/venderAccountRoute");
 
+<<<<<<< HEAD
 // Chat
 const chatRoutes = require("./src/hbs/chat/routes/chatRoutes");
 const messageRoutes = require("./src/hbs/chat/routes/messageRoutes");
+=======
+
+// Westwalk Family
+const AdminsAuth = require("./src/westwalk_Family/routes/AuthRoutes");
+const Complain = require("./src/westwalk_Family/routes/complaint");
+const AdminsEmail = require("./src/westwalk_Family/routes/AdminEmail");
+
+
+>>>>>>> main
 
 
 
@@ -55,13 +65,38 @@ const messageRoutes = require("./src/hbs/chat/routes/messageRoutes");
 // );
 app.use(
   cors({
+<<<<<<< HEAD
     origin: "*", // Allow all origins for testing
+=======
+    origin: [ "http://localhost:5173",  "http://127.0.0.1:5173", "https://al-wessilholding.com",
+              "https://halab-saudi.vercel.app", "https://hala-b-saudi.onrender.com", "https://maintenance.westwalk.qa" ],
+>>>>>>> main
     credentials: true,
   })
 );
 
 app.use(express.json());
 
+<<<<<<< HEAD
+=======
+app.use("/api/hbs", notificationRoutes);
+
+
+// ----------------- HEALTH CHECKS -----------------
+app.get("/health", (req, res) => {
+  res.json({ ok: true });
+});
+
+app.get("/", (req, res) => {
+  res.send("AWH Backend running ✅. Try /api/health or /health");
+});
+
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true });
+});
+
+
+>>>>>>> main
 // ----------------- ROUTES -----------------
 app.use("/api/notifications", notificationRoutes);
 
@@ -86,10 +121,20 @@ app.use("/api/hbs/redeem", halaredeem);
 app.use("/api/hbs/venues", venueRoutes);
 app.use("/api/hbs/venderAccount", vendorRoutes);
 
+<<<<<<< HEAD
 
 // test Route temporar --- remove after test
 const testRoute = require("./src/hbs/Notifications/testRoute");
 app.use("/api/test", testRoute);
+=======
+// Westwalk Family
+app.use("/api/westwalk", AdminsAuth);
+app.use("/api/westwalk/maintainceRequest", Complain);
+app.use("/api/westwalk/admin-emails", AdminsEmail);
+
+
+// yahan future routes add kar sakte ho
+>>>>>>> main
 
 
 
