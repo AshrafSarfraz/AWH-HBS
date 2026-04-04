@@ -1,13 +1,13 @@
-<<<<<<< HEAD
+
 // /src/hbs/Notifications/getAccessToken.js
 const path = require('path');
 const { GoogleAuth } = require('google-auth-library');
  const {serviceAccount} = require('../../database/firebase'); 
-=======
+
 const { GoogleAuth } = require("google-auth-library");
 
 const { serviceAccount } = require("../../database/firebase");
->>>>>>> main
+
 
 async function getAccessToken() {
 
@@ -28,27 +28,3 @@ async function getAccessToken() {
 }
 getAccessToken(); // call it directly for testing
 module.exports = getAccessToken;
-
-
-
-
-
-// const path = require('path');
-// const { GoogleAuth } = require('google-auth-library');
-// const { serviceAccount } = require('../../database/firebase'); 
-
-// async function getAccessToken() {
-//   const auth = new GoogleAuth({
-//     credentials: serviceAccount,
-//     scopes: 'https://www.googleapis.com/auth/firebase.messaging',
-//   });
-
-//   const client = await auth.getClient();
-//   const tokenResponse = await client.getAccessToken();
-
-//   console.log("Access Token:", tokenResponse.token); // ✅ add this
-//   return tokenResponse.token;
-// }
-
-// getAccessToken(); // ✅ call it directly for testing
-
