@@ -4,9 +4,6 @@ const path = require('path');
 const { GoogleAuth } = require('google-auth-library');
  const {serviceAccount} = require('../../database/firebase'); 
 
-const { GoogleAuth } = require("google-auth-library");
-
-const { serviceAccount } = require("../../database/firebase");
 
 
 async function getAccessToken() {
