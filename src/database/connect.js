@@ -28,11 +28,3 @@ const WESTWALK_DB = mongoose.createConnection(process.env.MONGO_URI_WESTWALK, {
 
 
 module.exports = { HR_DB, HBS_DB, WESTWALK_DB };
-
-
-
-
-
-
-
-

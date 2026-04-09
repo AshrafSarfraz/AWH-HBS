@@ -1,3 +1,4 @@
+
 // /src/hbs/chat/chatSocket.js
 const { Chat } = require("./chat");
 const { Message } = require("./message");
@@ -5,6 +6,7 @@ const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
 const sendFCMMessage = require("../Notifications/sendFCMMessage");
 const Device = require("./device");
+const {Block} = require("./block")
 
 const OnlineUsers = new Map();
 
@@ -89,6 +91,27 @@ const initializeSocket = (server) => {
           });
 
         }
+
+         // ✅ BLOCK CHECK — yeh naya part hai
+    const otherUserId = chat.participants
+      .map(p => p.toString())
+      .find(id => id !== userId);
+
+    const blockExists = await Block.findOne({
+      $or: [
+        { blocker: userId,      blocked: otherUserId },  // maine block kia
+        { blocker: otherUserId, blocked: userId      },  // usne block kia
+      ]
+    });
+
+    if (blockExists) {
+      return socket.emit("message-status", {
+        tempId,
+        status: "failed",
+        reason: "blocked"   // frontend is reason se UI update karega
+      });
+    }
+    // ✅ BLOCK CHECK khatam — baaki code same rehta hai
 
         // SAVE MESSAGE
 
@@ -270,3 +293,5 @@ participants.forEach(pid => {
 
 module.exports = initializeSocket;
 module.exports.OnlineUsers = OnlineUsers;
+
+

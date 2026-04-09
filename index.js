@@ -30,53 +30,40 @@ const halaredeem = require("./src/hbs/routes/redeem");
 const venueRoutes = require("./src/hbs/routes/venueRoutes");
 const vendorRoutes = require("./src/hbs/routes/venderAccountRoute");
 
-
 const chatRoutes = require("./src/hbs/chat/routes/chatRoutes");
 const messageRoutes = require("./src/hbs/chat/routes/messageRoutes");
-
 
 // Westwalk Family
 const AdminsAuth = require("./src/westwalk_Family/routes/AuthRoutes");
 const Complain = require("./src/westwalk_Family/routes/complaint");
 const AdminsEmail = require("./src/westwalk_Family/routes/AdminEmail");
 
-
-
-
-
 app.use(
   cors({
-    origin: "*", // Allow all origins for testing
-    origin: [ "http://localhost:5173",  "http://127.0.0.1:5173", "https://al-wessilholding.com",
-              "https://halab-saudi.vercel.app", "https://hala-b-saudi.onrender.com", "https://maintenance.westwalk.qa" ],
-
+    origin: [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "https://al-wessilholding.com",
+      "https://halab-saudi.vercel.app",
+      "https://hala-b-saudi.onrender.com",
+      "https://maintenance.westwalk.qa",
+    ],
     credentials: true,
   })
 );
 
 app.use(express.json());
 
-
-app.use("/api/hbs", notificationRoutes);
-
-
 // ----------------- HEALTH CHECKS -----------------
-app.get("/health", (req, res) => {
-  res.json({ ok: true });
-});
-
-app.get("/", (req, res) => {
-  res.send("AWH Backend running ✅. Try /api/health or /health");
-});
-
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true });
-});
-
-
+app.get("/health", (req, res) => res.json({ ok: true }));
+app.get("/", (req, res) => res.send("AWH Backend running ✅"));
+app.get("/api/health", (req, res) => res.json({ ok: true }));
+app.get("/api/test", (req, res) => { console.log("API HIT"); res.send("working"); });
 
 // ----------------- ROUTES -----------------
+
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/hbs", notificationRoutes);
 
 // HR
 app.use("/hr", employeeRouter);
@@ -99,24 +86,21 @@ app.use("/api/hbs/redeem", halaredeem);
 app.use("/api/hbs/venues", venueRoutes);
 app.use("/api/hbs/venderAccount", vendorRoutes);
 
-
-
-
 // Westwalk Family
 app.use("/api/westwalk", AdminsAuth);
 app.use("/api/westwalk/maintainceRequest", Complain);
 app.use("/api/westwalk/admin-emails", AdminsEmail);
 
-
-
-
-
-
-//user routes
+// User routes
 const userRoutes = require("./src/hbs/chat/routes/userRoutes");
 app.use("/api/users", userRoutes);
 
-// Chat
+// ✅ FIX: blockRoutes MUST be registered BEFORE chatRoutes
+// chatRoutes has a /:chatId wildcard that would intercept /api/chat/block/* otherwise
+const blockRoutes = require('./src/hbs/chat/routes/blockRoutes');
+app.use('/api/block', blockRoutes);
+
+// Chat routes (registered AFTER block routes)
 app.use("/api/chat", chatRoutes);
 app.use("/api/messages", messageRoutes);
 
@@ -124,35 +108,22 @@ app.use("/api/messages", messageRoutes);
 const deviceRoutes = require("./src/hbs/chat/routes/deviceRoutes");
 app.use("/api/devices", deviceRoutes);
 
-// ----------------- HEALTH CHECKS -----------------
-app.get("/", (req, res) => res.send("AWH Backend running ✅. Try /api/health or /health"));
-app.get("/health", (req, res) => res.json({ ok: true }));
-app.get("/api/health", (req, res) => res.json({ ok: true }));
-
-app.get("/api/test", (req, res) => {
-  console.log("API HIT");
-  res.send("working");
-});
-
 // ----------------- SERVER & SOCKET -----------------
 const server = createServer(app);
 const initializeSocket = require("./src/hbs/chat/chatSocket");
-
-// initialize socket server
 initializeSocket(server);
 
 const PORT = process.env.PORT;
-server.listen(PORT,'0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log("Server running on port", PORT);
   startEmployeeCron();
-// MongoDB connection
-const mongoose = require("mongoose");
-const MONGO_URI = process.env.MONGO_URI_HBS;
 
-mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+  const mongoose = require("mongoose");
+  const MONGO_URI = process.env.MONGO_URI_HBS;
+  mongoose.connect(MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  });
   mongoose.connection.on('connected', () => console.log('MongoDB connected'));
-mongoose.connection.on('error', (err) => console.log('MongoDB error:', err));
+  mongoose.connection.on('error', (err) => console.log('MongoDB error:', err));
 });
