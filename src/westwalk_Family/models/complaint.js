@@ -9,6 +9,11 @@ const ComplaintSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    qid: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     unitno: {
       type: String,
       required: true,
@@ -41,8 +46,14 @@ const ComplaintSchema = new mongoose.Schema(
       trim: true,
     },
     images: {
-      type: [String], // ✅ array of URLs (was `image: String`)
+      type: [String],
       default: [],
+    },
+    // ✅ NEW: User khud batayega room mein hai ya nahi
+    isAtHome: {
+      type: String,
+      enum: ['yes', 'no'],
+      required: true,
     },
     status: {
       type: String,
