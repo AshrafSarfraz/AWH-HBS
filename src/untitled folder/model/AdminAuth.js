@@ -2,8 +2,6 @@ const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const { WESTWALK_DB } = require("../../database/connect");
 
-
-
 const AdminAuthSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
@@ -15,6 +13,13 @@ const AdminAuthSchema = new mongoose.Schema(
       trim: true,
     },
     password: { type: String, required: true, minlength: 6 },
+
+    // ✅ Role field add kiya
+    role: {
+      type: String,
+      enum: ["admin", "user"],
+      default: "user",
+    },
   },
   { timestamps: true }
 );
@@ -30,6 +35,5 @@ AdminAuthSchema.pre("save", async function (next) {
 AdminAuthSchema.methods.comparePassword = function (candidate) {
   return bcrypt.compare(candidate, this.password);
 };
-
 
 module.exports = WESTWALK_DB.model("AdminAuth", AdminAuthSchema);
