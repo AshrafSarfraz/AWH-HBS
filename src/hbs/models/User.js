@@ -14,6 +14,13 @@ const UserSchema = new mongoose.Schema(
     lastOtpSentAt: { type: Date, default: null },
     otpCode: { type: String, default: null },
     otpExpiresAt: { type: Date, default: null },
+
+    // For chat presence last seen
+    lastSeen: {
+      type: Date,
+      default: null,
+    },
+
   },
   {
     collection: "Users",
