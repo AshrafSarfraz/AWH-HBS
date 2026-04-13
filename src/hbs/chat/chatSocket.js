@@ -8,16 +8,15 @@ const sendFCMMessage = require("../Notifications/sendFCMMessage");
 const Device = require("./device");
 const { Block } = require("./block");
 
-const OnlineUsers = new Map(); 
-// userId -> Set(socketId)
+// userId -> Set(socketIds)
+const OnlineUsers = new Map();
 
 const initializeSocket = (server) => {
-
   const io = new Server(server, {
     cors: {
       origin: "*",
-      methods: ["GET", "POST"]
-    }
+      methods: ["GET", "POST"],
+    },
   });
 
   // ─────────────────────────────────────────
@@ -44,29 +43,30 @@ const initializeSocket = (server) => {
   // ─────────────────────────────────────────
 
   io.on("connection", async (socket) => {
-
     const userId = socket.userId;
-if (!OnlineUsers.has(userId)) {
-  OnlineUsers.set(userId, new Set());
-}
 
-OnlineUsers.get(userId).add(socket.id);
+    // ✅ FIX 1: Set properly banao, kabhi overwrite mat karo
+    if (!OnlineUsers.has(userId)) {
+      OnlineUsers.set(userId, new Set());
+    }
+    OnlineUsers.get(userId).add(socket.id);
+
     socket.join(`user:${userId}`);
-    socket.broadcast.emit("user-online", { userId });
-
-    // Update user's lastSeen to null (indicating online)
-    OnlineUsers.set(userId, socket.id);
-
-  setTimeout(() => {
-  socket.emit("online-users", Array.from(OnlineUsers.keys()));
-}, 300);
-
-  io.to(`user:${userId}`).emit("user-online", {
-    userId,
-  });
 
     console.log(`[CONNECT] userId: "${userId}" | socketId: "${socket.id}"`);
     console.log(`[CONNECT] OnlineUsers now:`, [...OnlineUsers.keys()]);
+
+    // ✅ FIX 2: Sirf doosron ko batao ke ye user online hua
+    // (apne aap ko "user-online" emit karne ki zaroorat nahi)
+    socket.broadcast.emit("user-online", { userId });
+
+    // ✅ FIX 3: Sirf ek baar online-users emit karo — naye user ko
+    socket.emit("online-users", Array.from(OnlineUsers.keys()));
+
+    // Re-sync request (reconnect pe frontend se aata hai)
+    socket.on("request-online-sync", () => {
+      socket.emit("online-users", Array.from(OnlineUsers.keys()));
+    });
 
     // ─────────────────────────────────────────
     // ON CONNECT: Mark pending messages as delivered
@@ -74,7 +74,7 @@ OnlineUsers.get(userId).add(socket.id);
 
     try {
       const userChats = await Chat.find({ participants: userId }).select("_id");
-      const chatIds = userChats.map(c => c._id);
+      const chatIds = userChats.map((c) => c._id);
 
       const undelivered = await Message.find({
         chat: { $in: chatIds },
@@ -83,7 +83,7 @@ OnlineUsers.get(userId).add(socket.id);
       }).select("_id sender chat");
 
       if (undelivered.length > 0) {
-        const ids = undelivered.map(m => m._id);
+        const ids = undelivered.map((m) => m._id);
         await Message.updateMany({ _id: { $in: ids } }, { status: "delivered" });
 
         const grouped = undelivered.reduce((acc, m) => {
@@ -94,7 +94,9 @@ OnlineUsers.get(userId).add(socket.id);
         }, {});
 
         for (const [senderId, data] of Object.entries(grouped)) {
-          console.log(`[CONNECT] ${data.ids.length} msg(s) delivered for sender "${senderId}"`);
+          console.log(
+            `[CONNECT] ${data.ids.length} msg(s) delivered for sender "${senderId}"`
+          );
           io.to(`user:${senderId}`).emit("messages-read", {
             chatId: data.chatId,
             messageIds: data.ids,
@@ -106,14 +108,6 @@ OnlineUsers.get(userId).add(socket.id);
       console.error("[CONNECT-DELIVER ERROR]", err.message);
     }
 
-
-    // Send currently online users to new user
-socket.emit("online-users", Array.from(OnlineUsers.keys()));
-socket.on("request-online-sync", () => {
-  socket.emit("online-users", Array.from(OnlineUsers.keys()));
-});
-
-
     // ─────────────────────────────────────────
     // JOIN CHAT
     // ─────────────────────────────────────────
@@ -121,7 +115,6 @@ socket.on("request-online-sync", () => {
     socket.on("join-chat", async (chatId) => {
       socket.join(`chat:${chatId}`);
       console.log(`[JOIN-CHAT] userId: "${userId}" joined chatId: "${chatId}"`);
-      console.log(`[JOIN-CHAT] OnlineUsers:`, [...OnlineUsers.keys()]);
 
       try {
         const unreadMessages = await Message.find({
@@ -132,7 +125,7 @@ socket.on("request-online-sync", () => {
 
         if (!unreadMessages.length) return;
 
-        const messageIds = unreadMessages.map(m => m._id);
+        const messageIds = unreadMessages.map((m) => m._id);
         await Message.updateMany({ _id: { $in: messageIds } }, { status: "seen" });
 
         const grouped = unreadMessages.reduce((acc, m) => {
@@ -143,7 +136,9 @@ socket.on("request-online-sync", () => {
         }, {});
 
         for (const [senderId, ids] of Object.entries(grouped)) {
-          console.log(`[JOIN-CHAT] Notifying "${senderId}" — ${ids.length} msg(s) seen`);
+          console.log(
+            `[JOIN-CHAT] Notifying "${senderId}" — ${ids.length} msg(s) seen`
+          );
           io.to(`user:${senderId}`).emit("messages-read", {
             chatId,
             messageIds: ids,
@@ -182,29 +177,40 @@ socket.on("request-online-sync", () => {
         }
 
         const otherUserId = chat.participants
-          .map(p => String(p))
-          .find(id => id !== userId);
+          .map((p) => String(p))
+          .find((id) => id !== userId);
 
-        console.log(`[SEND-MSG] sender: "${userId}" | otherUserId: "${otherUserId}"`);
-        console.log(`[SEND-MSG] OnlineUsers.has(otherUserId) →`, OnlineUsers.has(otherUserId));
+        console.log(
+          `[SEND-MSG] sender: "${userId}" | otherUserId: "${otherUserId}"`
+        );
 
         const blockExists = await Block.findOne({
           $or: [
             { blocker: userId, blocked: otherUserId },
             { blocker: otherUserId, blocked: userId },
-          ]
+          ],
         });
 
         if (blockExists) {
-          console.log(`[SEND-MSG] Block found between "${userId}" and "${otherUserId}"`);
-          return socket.emit("message-status", { tempId, status: "failed", reason: "blocked" });
+          console.log(
+            `[SEND-MSG] Block found between "${userId}" and "${otherUserId}"`
+          );
+          return socket.emit("message-status", {
+            tempId,
+            status: "failed",
+            reason: "blocked",
+          });
         }
 
+        // ✅ Correct online check using Set
         const isOnline =
-  OnlineUsers.has(otherUserId) &&
-  OnlineUsers.get(otherUserId).size > 0;
+          OnlineUsers.has(otherUserId) &&
+          OnlineUsers.get(otherUserId).size > 0;
+
         const msgStatus = isOnline ? "delivered" : "sent";
-        console.log(`[SEND-MSG] isOnline: ${isOnline} | msgStatus: "${msgStatus}" | tempId: "${tempId}"`);
+        console.log(
+          `[SEND-MSG] isOnline: ${isOnline} | msgStatus: "${msgStatus}" | tempId: "${tempId}"`
+        );
 
         const message = await Message.create({
           chat: chatId,
@@ -235,24 +241,23 @@ socket.on("request-online-sync", () => {
           tempId,
         };
 
-        // ── Send message to receiver in chat room ──
+        // Receiver ko message bhejo (chat room mein)
         socket.to(`chat:${chatId}`).emit("receive-message", formattedMessage);
 
-        // ── Confirm to sender (for tick update in chatScreen) ──
+        // Sender ko tick update bhejo
         const statusPayload = {
           tempId,
           status: "sent",
           message: formattedMessage,
           msgStatus,
         };
-        console.log(`[SEND-MSG] Emitting message-status:`, JSON.stringify(statusPayload));
+        console.log(
+          `[SEND-MSG] Emitting message-status:`,
+          JSON.stringify(statusPayload)
+        );
         socket.emit("message-status", statusPayload);
 
-        // ✅ FIX: Emit chat-updated to each participant's USER room
-        // This ensures the conversation list screen receives it
-        // even when the user is NOT inside the chat room
-        //
-        // Sender gets incrementUnread: false (they sent it)
+        // Chat list update — sender
         io.to(`user:${userId}`).emit("chat-updated", {
           chatId,
           lastMessage: formattedMessage,
@@ -260,7 +265,7 @@ socket.on("request-online-sync", () => {
           incrementUnread: false,
         });
 
-        // Receiver gets incrementUnread: true (new unread message)
+        // Chat list update — receiver
         io.to(`user:${otherUserId}`).emit("chat-updated", {
           chatId,
           lastMessage: formattedMessage,
@@ -268,26 +273,29 @@ socket.on("request-online-sync", () => {
           incrementUnread: true,
         });
 
-        console.log(`[SEND-MSG] chat-updated emitted to user:${userId} and user:${otherUserId}`);
+        console.log(
+          `[SEND-MSG] chat-updated emitted to user:${userId} and user:${otherUserId}`
+        );
 
-        // ── Push notification if offline ──
+        // Push notification if offline
         if (!isOnline) {
           try {
             const devices = await Device.find({ user: otherUserId });
-            const tokens = devices.map(d => d.fcmToken).filter(Boolean);
+            const tokens = devices.map((d) => d.fcmToken).filter(Boolean);
             if (tokens.length > 0) {
               await sendFCMMessage(tokens, {
                 title: message.sender.name || "New Message",
                 body: message.text,
                 data: { chatId, senderId: userId },
               });
-              console.log(`[FCM] Sent push to ${tokens.length} device(s) of "${otherUserId}"`);
+              console.log(
+                `[FCM] Sent push to ${tokens.length} device(s) of "${otherUserId}"`
+              );
             }
           } catch (fcmErr) {
             console.error("[FCM ERROR]", fcmErr.message);
           }
         }
-
       } catch (err) {
         console.error("[SEND-MSG ERROR]", err.message);
         socket.emit("message-status", { tempId, status: "failed" });
@@ -321,9 +329,10 @@ socket.on("request-online-sync", () => {
           msgStatus: "seen",
         };
 
-        console.log(`[MARK-READ] "${messageId}" seen. Notifying sender: "${senderId}"`);
+        console.log(
+          `[MARK-READ] "${messageId}" seen. Notifying sender: "${senderId}"`
+        );
         io.to(`user:${senderId}`).emit("messages-read", payload);
-
       } catch (err) {
         console.error("[MARK-READ ERROR]", err.message);
       }
@@ -361,15 +370,16 @@ socket.on("request-online-sync", () => {
             deleted: true,
           };
 
-          // ✅ Also emit to user rooms so conversation list updates
-          chat.participants.map(p => String(p)).forEach(pid => {
-            io.to(`user:${pid}`).emit("chat-updated", {
-              chatId,
-              lastMessage: deletedFormattedMessage,
-              lastMessageAt: message.createdAt,
-              incrementUnread: false,
+          chat.participants
+            .map((p) => String(p))
+            .forEach((pid) => {
+              io.to(`user:${pid}`).emit("chat-updated", {
+                chatId,
+                lastMessage: deletedFormattedMessage,
+                lastMessageAt: message.createdAt,
+                incrementUnread: false,
+              });
             });
-          });
         }
       } catch (err) {
         console.error("[DELETE-MSG ERROR]", err.message);
@@ -395,39 +405,42 @@ socket.on("request-online-sync", () => {
     // ─────────────────────────────────────────
 
     socket.on("disconnect", async () => {
-  let sockets = OnlineUsers.get(userId);
+      const sockets = OnlineUsers.get(userId);
 
-  // 🔥 SAFETY FIX (IMPORTANT)
-  if (!(sockets instanceof Set)) {
-    sockets = new Set();
-  }
-
-  if (sockets && sockets instanceof Set) {
-    sockets.delete(socket.id);
-
-    if (sockets.size === 0) {
-      OnlineUsers.delete(userId);
-
-      const lastSeen = new Date();
-
-      try {
-        await User.findByIdAndUpdate(userId, { lastSeen });
-
-        socket.broadcast.emit("user-offline", {
-          userId,
-          lastSeen,
-        });
-
-        console.log(`[OFFLINE] userId: ${userId}`);
-      } catch (err) {
-        console.error("[LAST SEEN ERROR]", err.message);
+      // ✅ Safety check — agar kisi wajah se Set nahi hai to skip
+      if (!(sockets instanceof Set)) {
+        OnlineUsers.delete(userId);
+        return;
       }
-    } else {
-      OnlineUsers.set(userId, sockets);
-    }
-  }
-});
 
+      sockets.delete(socket.id);
+
+      // Sirf tab offline mark karo jab user ka koi bhi socket na bache
+      if (sockets.size === 0) {
+        OnlineUsers.delete(userId);
+
+        const lastSeen = new Date();
+
+        try {
+          await User.findByIdAndUpdate(userId, { lastSeen });
+
+          // ✅ Sabko batao ke user offline ho gaya
+          socket.broadcast.emit("user-offline", {
+            userId,
+            lastSeen,
+          });
+
+          console.log(`[OFFLINE] userId: "${userId}" | lastSeen: ${lastSeen}`);
+        } catch (err) {
+          console.error("[LAST SEEN ERROR]", err.message);
+        }
+      } else {
+        // Doosre tabs/devices se abhi bhi connected hai
+        console.log(
+          `[DISCONNECT] userId: "${userId}" still has ${sockets.size} socket(s) active`
+        );
+      }
+    });
   });
 
   return io;
