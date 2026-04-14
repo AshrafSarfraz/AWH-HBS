@@ -7,7 +7,7 @@ const jwt = require("jsonwebtoken");
 const sendFCMMessage = require("./sendFCMMessage");
 const Device = require("./model/device");
 const { Block } = require("./model/block");
-const { isRateLimited } = require("./utils/socketRateLimiter"); // ✅ NEW
+const { isRateLimited } = require("../utils/socketratelimiter"); // ✅ NEW
 
 // userId -> Set(socketIds)
 const OnlineUsers = new Map();
