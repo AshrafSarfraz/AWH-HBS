@@ -9,6 +9,11 @@ const ComplaintSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    qid: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     unitno: {
       type: String,
       required: true,
