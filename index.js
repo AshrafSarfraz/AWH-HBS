@@ -7,7 +7,7 @@ const path = require("path");
 const { createServer } = require("node:http");
 
 // ----------------- IMPORT ROUTES -----------------
-const notificationRoutes = require("./src/hbs/Notifications/notificationRoutes");
+
 
 // HR System
 const { router: employeeRouter, startEmployeeCron } = require("./src/database/hrSystem");
@@ -29,9 +29,12 @@ const groupBrands = require("./src/hbs/routes/brandGroupRoute");
 const halaredeem = require("./src/hbs/routes/redeem");
 const venueRoutes = require("./src/hbs/routes/venueRoutes");
 const vendorRoutes = require("./src/hbs/routes/venderAccountRoute");
-
 const chatRoutes = require("./src/hbs/chat/routes/chatRoutes");
 const messageRoutes = require("./src/hbs/chat/routes/messageRoutes");
+const deviceRoutes = require("./src/hbs/chat/routes/deviceRoutes");
+const blockRoutes = require('./src/hbs/chat/routes/blockRoutes');
+const userRoutes = require("./src/hbs/chat/routes/userRoutes");
+
 
 // Westwalk Family
 const AdminsAuth = require("./src/westwalk_Family/routes/AuthRoutes");
@@ -62,9 +65,6 @@ app.get("/api/test", (req, res) => { console.log("API HIT"); res.send("working")
 
 // ----------------- ROUTES -----------------
 
-app.use("/api/notifications", notificationRoutes);
-app.use("/api/hbs", notificationRoutes);
-
 // HR
 app.use("/hr", employeeRouter);
 app.use("/api/admin/forms", adminFormRoutes);
@@ -85,28 +85,25 @@ app.use("/api/hbs/groupBrands", groupBrands);
 app.use("/api/hbs/redeem", halaredeem);
 app.use("/api/hbs/venues", venueRoutes);
 app.use("/api/hbs/venderAccount", vendorRoutes);
+app.use("/api/users", userRoutes);
+app.use('/api/block', blockRoutes);
+app.use("/api/chat", chatRoutes);
+app.use("/api/messages", messageRoutes);
+app.use("/api/devices", deviceRoutes);
+
+
+
+
 
 // Westwalk Family
 app.use("/api/westwalk", AdminsAuth);
 app.use("/api/westwalk/maintainceRequest", Complain);
 app.use("/api/westwalk/admin-emails", AdminsEmail);
 
-// User routes
-const userRoutes = require("./src/hbs/chat/routes/userRoutes");
-app.use("/api/users", userRoutes);
 
-// ✅ FIX: blockRoutes MUST be registered BEFORE chatRoutes
-// chatRoutes has a /:chatId wildcard that would intercept /api/chat/block/* otherwise
-const blockRoutes = require('./src/hbs/chat/routes/blockRoutes');
-app.use('/api/block', blockRoutes);
 
-// Chat routes (registered AFTER block routes)
-app.use("/api/chat", chatRoutes);
-app.use("/api/messages", messageRoutes);
 
-// Device routes
-const deviceRoutes = require("./src/hbs/chat/routes/deviceRoutes");
-app.use("/api/devices", deviceRoutes);
+
 
 // ----------------- SERVER & SOCKET -----------------
 const server = createServer(app);

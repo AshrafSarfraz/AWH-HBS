@@ -1,6 +1,6 @@
 // block.js
 const mongoose = require("mongoose");
-const { HBS_DB } = require("../../database/connect");
+const { HBS_DB } = require("../../../database/connect");
 
 const BlockSchema = new mongoose.Schema(
   {
