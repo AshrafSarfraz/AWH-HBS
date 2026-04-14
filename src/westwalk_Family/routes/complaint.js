@@ -8,13 +8,10 @@ const {
   getComplaintById,
   updateComplaint,
   deleteComplaint,
-  getComplaintsByQID,
 } = require("../controller/complaint");
 
 // Multer — memory storage (same pattern as your brands)
 const upload = multer({ storage: multer.memoryStorage() });
-router.get("/my", getComplaintsByQID);
-
 
 router.post(  "/",    upload.fields([{ name: "image", maxCount: 3 }]), createComplaint);
 router.get(   "/",    getComplaints);

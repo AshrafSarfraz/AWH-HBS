@@ -10,6 +10,8 @@ const {
 const { getActiveAdminEmailList } = require("../utils/AdminEmailService");
 const { W_uploadToFirebase } = require("../utils/W_uploadToFirebase");
 
+
+
 // ─────────────────────────────────────────────
 // HELPER — upload multiple images
 // ─────────────────────────────────────────────
@@ -30,38 +32,18 @@ exports.createComplaint = async (req, res) => {
     const body  = req.body;
     const files = req.files || {};
 
-    // ✅ isAtHome check — room mein nahi hai toh proceed nahi hoga
-    if (!body.isAtHome || body.isAtHome.toLowerCase() === "no") {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Complaint submit nahi ho sakti. Aap apne room mein mojood nahi hain. Jab aap room mein hon tab dobara submit karein.",
-      });
-    }
-
-    // ✅ QID required check
-    if (!body.qid || body.qid.trim() === "") {
-      return res.status(400).json({
-        success: false,
-        message: "QID provide karna zaroori hai.",
-      });
-    }
-
-    // ✅ Upload images (up to 3)
+    // ✅ Upload all images (up to 3)
     const imageUrls = await uploadImages(files.image);
 
     const complaint = new Complaint({
       name:        body.name,
-      qid:         body.qid.trim(),
       unitno:      body.unitno,
       buildingno:  body.buildingno,
       phoneNumber: body.phoneNumber,
       email:       body.email,
       subject:     body.subject,
       description: body.description,
-      images:      imageUrls,
-      isAtHome:    "yes",          // ✅ only "yes" reaches here
-      status:      "Pending",
+      images:      imageUrls,        // ✅ array of URLs
     });
 
     const saved = await complaint.save();
@@ -89,48 +71,7 @@ exports.createComplaint = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// ✅ GET Complaints by QID (User apni complaints dekhe)
-// GET /api/complaints/my?qid=1234567890
-// ─────────────────────────────────────────────
-exports.getComplaintsByQID = async (req, res) => {
-  try {
-    const { qid } = req.query;
-
-    if (!qid || qid.trim() === "") {
-      return res.status(400).json({
-        success: false,
-        message: "QID provide karein.",
-      });
-    }
-
-    const complaints = await Complaint.find({ qid: qid.trim() })
-      .select("-__v")
-      .sort({ createdAt: -1 }); // latest pehle
-
-    if (complaints.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Is QID ke liye koi complaint nahi mili.",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      total: complaints.length,
-      data: complaints,
-    });
-  } catch (err) {
-    console.error("getComplaintsByQID error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Error fetching complaints",
-      error: err.message,
-    });
-  }
-};
-
-// ─────────────────────────────────────────────
-// GET all Complaints (Admin)
+// GET all Complaints
 // GET /api/complaints
 // ─────────────────────────────────────────────
 exports.getComplaints = async (req, res) => {
@@ -173,7 +114,7 @@ exports.getComplaintById = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// UPDATE Complaint (Admin)
+// UPDATE Complaint
 // PUT /api/complaints/:id
 // ─────────────────────────────────────────────
 exports.updateComplaint = async (req, res) => {
@@ -186,7 +127,7 @@ exports.updateComplaint = async (req, res) => {
       return res.status(404).json({ success: false, message: "Complaint not found" });
     }
 
-    // ✅ Detect status change for email notification
+    // Detect status change
     const previousStatus  = complaint.status;
     const incomingStatus  = body.status;
     const triggerStatuses = ["Resolved", "Rejected"];
@@ -195,9 +136,9 @@ exports.updateComplaint = async (req, res) => {
       incomingStatus !== previousStatus &&
       triggerStatuses.includes(incomingStatus);
 
-    // ✅ Update allowed text fields
+    // Update text fields
     const updatableFields = [
-      "name", "qid", "unitno", "buildingno",
+      "name", "unitno", "buildingno",
       "phoneNumber", "email",
       "subject", "description", "status",
     ];
@@ -205,16 +146,16 @@ exports.updateComplaint = async (req, res) => {
       if (body[field] !== undefined) complaint[field] = body[field];
     });
 
-    // ✅ Upload new images and merge, cap at 3
+    // ✅ Upload new images if provided and merge with existing
     if (files.image && files.image.length > 0) {
       const newUrls = await uploadImages(files.image);
       const existing = complaint.images || [];
+      // Keep existing + add new, cap at 3
       complaint.images = [...existing, ...newUrls].slice(0, 3);
     }
 
     const updated = await complaint.save();
 
-    // ✅ Send status update email
     if (shouldNotifyUser) {
       const statusTpl = complaintStatusUpdateEmail(updated);
       sendEmail({ to: updated.email, ...statusTpl });
@@ -255,30 +196,17 @@ exports.deleteComplaint = async (req, res) => {
 
 
 
-// // controllers/HComplaintController.js
-// const Complaint = require("../models/complaint");
 
+// // controllers/HComplaintController.js
+// const Complaint = require("../models/complaint"); // ✅ Fixed — correct model filename
+// const { uploadToFirebase } = require("../../database/firebase");
 // const {
 //   sendEmail,
 //   complaintConfirmationEmail,
 //   complaintAdminAlertEmail,
 //   complaintStatusUpdateEmail,
 // } = require("../utils/sendEmail");
-// const { getActiveAdminEmailList } = require("../utils/AdminEmailService");
-// const { W_uploadToFirebase } = require("../utils/W_uploadToFirebase");
-
-
-
-// // ─────────────────────────────────────────────
-// // HELPER — upload multiple images
-// // ─────────────────────────────────────────────
-// const uploadImages = async (files) => {
-//   if (!files || files.length === 0) return [];
-//   const uploadPromises = files.map((file) =>
-//     W_uploadToFirebase(file, "complaints/images")
-//   );
-//   return Promise.all(uploadPromises);
-// };
+// const { getActiveAdminEmailList } = require("../utils/AdminEmailService"); // ✅ Fixed — correct service path
 
 // // ─────────────────────────────────────────────
 // // CREATE Complaint
@@ -289,9 +217,12 @@ exports.deleteComplaint = async (req, res) => {
 //     const body  = req.body;
 //     const files = req.files || {};
 
-//     // ✅ Upload all images (up to 3)
-//     const imageUrls = await uploadImages(files.image);
+//     // 1) Upload image to Firebase (if provided)
+//     const imageUrl = files.image
+//       ? await uploadToFirebase(files.image[0], "complaints/images")
+//       : null;
 
+//     // 2) Save complaint
 //     const complaint = new Complaint({
 //       name:        body.name,
 //       unitno:      body.unitno,
@@ -300,20 +231,20 @@ exports.deleteComplaint = async (req, res) => {
 //       email:       body.email,
 //       subject:     body.subject,
 //       description: body.description,
-//       images:      imageUrls,        // ✅ array of URLs
+//       image:       imageUrl,
 //     });
 
 //     const saved = await complaint.save();
 
-//     // Confirmation email → complainant
+//     // 3) Confirmation email → complainant
 //     const confirmTpl = complaintConfirmationEmail(saved);
-//     sendEmail({ to: saved.email, ...confirmTpl });
+//     sendEmail({ to: saved.email, ...confirmTpl }); // fire-and-forget
 
-//     // Alert email → all active admins
+//     // 4) Alert email → all active admin emails from DB
 //     const adminEmails = await getActiveAdminEmailList();
 //     if (adminEmails.length > 0) {
 //       const adminTpl = complaintAdminAlertEmail(saved);
-//       sendEmail({ to: adminEmails.join(","), ...adminTpl });
+//       sendEmail({ to: adminEmails.join(","), ...adminTpl }); // fire-and-forget
 //     }
 
 //     return res.status(201).json({ success: true, data: saved });
@@ -384,7 +315,7 @@ exports.deleteComplaint = async (req, res) => {
 //       return res.status(404).json({ success: false, message: "Complaint not found" });
 //     }
 
-//     // Detect status change
+//     // Detect status change to Resolved / Rejected
 //     const previousStatus  = complaint.status;
 //     const incomingStatus  = body.status;
 //     const triggerStatuses = ["Resolved", "Rejected"];
@@ -393,7 +324,7 @@ exports.deleteComplaint = async (req, res) => {
 //       incomingStatus !== previousStatus &&
 //       triggerStatuses.includes(incomingStatus);
 
-//     // Update text fields
+//     // Apply updatable fields
 //     const updatableFields = [
 //       "name", "unitno", "buildingno",
 //       "phoneNumber", "email",
@@ -403,19 +334,17 @@ exports.deleteComplaint = async (req, res) => {
 //       if (body[field] !== undefined) complaint[field] = body[field];
 //     });
 
-//     // ✅ Upload new images if provided and merge with existing
-//     if (files.image && files.image.length > 0) {
-//       const newUrls = await uploadImages(files.image);
-//       const existing = complaint.images || [];
-//       // Keep existing + add new, cap at 3
-//       complaint.images = [...existing, ...newUrls].slice(0, 3);
+//     // Update image if new one uploaded
+//     if (files.image && files.image[0]) {
+//       complaint.image = await uploadToFirebase(files.image[0], "complaints/images");
 //     }
 
 //     const updated = await complaint.save();
 
+//     // Status update email → complainant (only on Resolved or Rejected)
 //     if (shouldNotifyUser) {
 //       const statusTpl = complaintStatusUpdateEmail(updated);
-//       sendEmail({ to: updated.email, ...statusTpl });
+//       sendEmail({ to: updated.email, ...statusTpl }); // fire-and-forget
 //     }
 
 //     return res.json({ success: true, data: updated });
@@ -449,6 +378,3 @@ exports.deleteComplaint = async (req, res) => {
 //     });
 //   }
 // };
-
-
-
