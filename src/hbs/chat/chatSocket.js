@@ -12,20 +12,10 @@ const { isRateLimited } = require("../utils/socketratelimiter");
 // userId -> Set(socketIds)
 const OnlineUsers = new Map();
 
-// ✅ FIX: chatId -> Set(userId)
-// Track karo kaun sa user kis chat ko actively dekh raha hai
-// Agar user is Set mein hai — FCM mat bhejo (woh screen dekh raha hai)
-// Agar nahi hai — FCM bhejo (background, doosri screen, ya offline)
-const ActiveChatUsers = new Map();
-
 const initializeSocket = (server) => {
   const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] },
   });
-
-  // ─────────────────────────────────────────
-  // AUTH MIDDLEWARE
-  // ─────────────────────────────────────────
 
   io.use((socket, next) => {
     try {
@@ -41,10 +31,6 @@ const initializeSocket = (server) => {
     }
   });
 
-  // ─────────────────────────────────────────
-  // CONNECTION
-  // ─────────────────────────────────────────
-
   io.on("connection", async (socket) => {
     const userId = socket.userId;
 
@@ -59,10 +45,7 @@ const initializeSocket = (server) => {
       socket.emit("online-users", Array.from(OnlineUsers.keys()));
     });
 
-    // ─────────────────────────────────────────
-    // ON CONNECT: Mark pending messages as delivered
-    // ─────────────────────────────────────────
-
+    // ─── ON CONNECT: Mark pending as delivered ───────────────────────────────
     try {
       const userChats = await Chat.find({ participants: userId }).select("_id");
       const chatIds = userChats.map((c) => c._id);
@@ -96,17 +79,9 @@ const initializeSocket = (server) => {
       console.error("[CONNECT-DELIVER ERROR]", err.message);
     }
 
-    // ─────────────────────────────────────────
-    // JOIN CHAT
-    // ─────────────────────────────────────────
-
+    // ─── JOIN CHAT ────────────────────────────────────────────────────────────
     socket.on("join-chat", async (chatId) => {
       socket.join(`chat:${chatId}`);
-
-      // ✅ FIX: User actively is chat ko dekh raha hai — track karo
-      if (!ActiveChatUsers.has(chatId)) ActiveChatUsers.set(chatId, new Set());
-      ActiveChatUsers.get(chatId).add(userId);
-      socket._activeChatId = chatId;
 
       try {
         const unreadMessages = await Message.find({
@@ -144,28 +119,14 @@ const initializeSocket = (server) => {
       }
     });
 
-    // ─────────────────────────────────────────
-    // LEAVE CHAT
-    // ─────────────────────────────────────────
-
+    // ─── LEAVE CHAT ───────────────────────────────────────────────────────────
     socket.on("leave-chat", (chatId) => {
       socket.leave(`chat:${chatId}`);
-
-      // ✅ FIX: Active tracking se hata do
-      ActiveChatUsers.get(chatId)?.delete(userId);
-      if (ActiveChatUsers.get(chatId)?.size === 0) {
-        ActiveChatUsers.delete(chatId);
-      }
-      socket._activeChatId = null;
     });
 
-    // ─────────────────────────────────────────
-    // SEND MESSAGE
-    // ─────────────────────────────────────────
-
+    // ─── SEND MESSAGE ─────────────────────────────────────────────────────────
     socket.on("send-message", async ({ chatId, text, tempId, replyTo, mediaUrl, mediaType, mediaName }) => {
       try {
-        // Rate limiting
         if (isRateLimited(userId, 30, 60000)) {
           return socket.emit("message-error", {
             tempId,
@@ -192,7 +153,6 @@ const initializeSocket = (server) => {
           .map((p) => String(p))
           .find((id) => id !== userId);
 
-        // Block check
         const blockExists = await Block.findOne({
           $or: [
             { blocker: userId, blocked: otherUserId },
@@ -207,7 +167,6 @@ const initializeSocket = (server) => {
         const isOnline = OnlineUsers.has(otherUserId) && OnlineUsers.get(otherUserId).size > 0;
         const msgStatus = isOnline ? "delivered" : "sent";
 
-        // replyTo validate
         let replyToId = null;
         if (replyTo) {
           const replyMsg = await Message.findById(replyTo).select("_id chat");
@@ -293,84 +252,59 @@ const initializeSocket = (server) => {
           unreadCount: receiverUnread,
         });
 
-        // ─────────────────────────────────────────
-        // ✅ MAIN FIX: FCM notification
-        //
-        // PURANA (GALAT): if (!isOnline)
-        //   → Background mein socket connected rehta hai
-        //   → isOnline = true hota hai
-        //   → FCM skip ho jata tha
-        //
-        // NAYA (SAHI): if (!isViewingThisChat)
-        //   → Chahe online ho ya nahi
-        //   → Agar yeh specific chat screen open nahi — FCM bhejo
-        // ─────────────────────────────────────────
-        const isViewingThisChat = ActiveChatUsers.get(chatId)?.has(otherUserId) || false;
+        // ─────────────────────────────────────────────────────────────────────
+        // ✅ FCM — HAMESHA BHEJO
+        // Koi condition nahi — online ho ya offline, chat open ho ya nahi
+        // WhatsApp ki tarah — har message pe notification
+        // ─────────────────────────────────────────────────────────────────────
+        try {
+          const isMuted = chat.mutedBy?.some((id) => String(id) === otherUserId) || false;
 
-        if (!isViewingThisChat) {
-          try {
-            const isMuted = chat.mutedBy?.some((id) => String(id) === otherUserId) || false;
+          if (isMuted) {
+            console.log(`[FCM] Skipped — muted for "${otherUserId}"`);
+          } else {
+            const devices = await Device.find({ userId: otherUserId });
+            const tokens = devices.map((d) => d.token).filter(Boolean);
 
-            if (isMuted) {
-              console.log(`[FCM] Skipped — chat muted for "${otherUserId}"`);
+            if (tokens.length === 0) {
+              console.log(`[FCM] No devices for "${otherUserId}"`);
             } else {
-              const devices = await Device.find({ userId: otherUserId });
-              const tokens = devices.map((d) => d.token).filter(Boolean);
+              const notifBody = mediaUrl
+                ? `📎 ${mediaType === "image" ? "Photo" : mediaType === "video" ? "Video" : "Document"}`
+                : trimmedText;
 
-              if (tokens.length === 0) {
-                console.log(`[FCM] No devices registered for "${otherUserId}"`);
-              } else {
-                const notifBody = mediaUrl
-                  ? `📎 ${mediaType === "image" ? "Photo" : mediaType === "video" ? "Video" : "Document"}`
-                  : trimmedText;
-
-                for (const deviceToken of tokens) {
-                  await sendFCMMessage({
-                    to: deviceToken,
-                    title: message.sender.name || "New Message",
-                    body: notifBody,
-                    data: { chatId, senderId: userId },
-                  });
-                }
-                console.log(`[FCM] Sent to ${tokens.length} device(s) of "${otherUserId}"`);
+              for (const deviceToken of tokens) {
+                await sendFCMMessage({
+                  to: deviceToken,
+                  title: message.sender.name || "New Message",
+                  body: notifBody,
+                  data: { chatId, senderId: userId },
+                });
               }
+              console.log(`[FCM] Sent to ${tokens.length} device(s) of "${otherUserId}"`);
             }
-          } catch (fcmErr) {
-            console.error("[FCM ERROR]", fcmErr.message);
           }
-        } else {
-          console.log(`[FCM] Skipped — "${otherUserId}" is actively viewing this chat`);
+        } catch (fcmErr) {
+          console.error("[FCM ERROR]", fcmErr.message);
         }
+
       } catch (err) {
         console.error("[SEND-MSG ERROR]", err.message);
         socket.emit("message-status", { tempId, status: "failed" });
       }
     });
 
-    // ─────────────────────────────────────────
-    // EDIT MESSAGE
-    // ─────────────────────────────────────────
-
+    // ─── EDIT MESSAGE ─────────────────────────────────────────────────────────
     socket.on("edit-message", async ({ messageId, chatId, newText }) => {
       try {
-        if (!newText?.trim()) {
-          return socket.emit("message-error", { message: "Empty text se edit nahi ho sakta" });
-        }
-        if (newText.length > 1000) {
-          return socket.emit("message-error", { message: "Message bahut lamba hai (max 1000 characters)" });
-        }
+        if (!newText?.trim()) return socket.emit("message-error", { message: "Empty text se edit nahi ho sakta" });
+        if (newText.length > 1000) return socket.emit("message-error", { message: "Max 1000 characters" });
 
         const message = await Message.findById(messageId);
         if (!message) return;
-        if (String(message.sender) !== userId) {
-          return socket.emit("message-error", { message: "Sirf apna message edit kar sakte ho" });
-        }
-        if (message.deleted) {
-          return socket.emit("message-error", { message: "Deleted message edit nahi ho sakta" });
-        }
-        if (message.mediaUrl) {
-          return socket.emit("message-error", { message: "Media message edit nahi ho sakta" });
-        }
+        if (String(message.sender) !== userId) return socket.emit("message-error", { message: "Sirf apna message edit karo" });
+        if (message.deleted) return socket.emit("message-error", { message: "Deleted message edit nahi ho sakta" });
+        if (message.mediaUrl) return socket.emit("message-error", { message: "Media message edit nahi ho sakta" });
 
         message.text = newText.trim();
         message.edited = true;
@@ -388,10 +322,7 @@ const initializeSocket = (server) => {
       }
     });
 
-    // ─────────────────────────────────────────
-    // MARK READ (single)
-    // ─────────────────────────────────────────
-
+    // ─── MARK READ ────────────────────────────────────────────────────────────
     socket.on("mark-read", async ({ chatId, messageId }) => {
       try {
         if (!messageId) return;
@@ -413,16 +344,13 @@ const initializeSocket = (server) => {
       }
     });
 
-    // ─────────────────────────────────────────
-    // DELETE MESSAGE
-    // ─────────────────────────────────────────
-
+    // ─── DELETE MESSAGE ───────────────────────────────────────────────────────
     socket.on("delete-message", async ({ messageId, chatId }) => {
       try {
         const message = await Message.findById(messageId);
         if (!message) return;
         if (String(message.sender) !== userId) {
-          return socket.emit("message-error", { message: "Sirf apna message delete kar sakte ho" });
+          return socket.emit("message-error", { message: "Sirf apna message delete karo" });
         }
 
         message.text = "This message was deleted";
@@ -451,10 +379,7 @@ const initializeSocket = (server) => {
       }
     });
 
-    // ─────────────────────────────────────────
-    // TYPING
-    // ─────────────────────────────────────────
-
+    // ─── TYPING ───────────────────────────────────────────────────────────────
     socket.on("typing", ({ chatId }) => {
       socket.to(`chat:${chatId}`).emit("typing", { userId });
     });
@@ -463,20 +388,8 @@ const initializeSocket = (server) => {
       socket.to(`chat:${chatId}`).emit("stop-typing", { userId });
     });
 
-    // ─────────────────────────────────────────
-    // DISCONNECT
-    // ─────────────────────────────────────────
-
+    // ─── DISCONNECT ───────────────────────────────────────────────────────────
     socket.on("disconnect", async () => {
-      // ✅ Active chat cleanup
-      const activeChatId = socket._activeChatId;
-      if (activeChatId) {
-        ActiveChatUsers.get(activeChatId)?.delete(userId);
-        if (ActiveChatUsers.get(activeChatId)?.size === 0) {
-          ActiveChatUsers.delete(activeChatId);
-        }
-      }
-
       const sockets = OnlineUsers.get(userId);
       if (!(sockets instanceof Set)) {
         OnlineUsers.delete(userId);
@@ -504,4 +417,3 @@ const initializeSocket = (server) => {
 
 module.exports = initializeSocket;
 module.exports.OnlineUsers = OnlineUsers;
-module.exports.ActiveChatUsers = ActiveChatUsers;

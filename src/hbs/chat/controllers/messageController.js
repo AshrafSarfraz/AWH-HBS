@@ -1,11 +1,10 @@
 // /src/hbs/chat/controllers/messageController.js
 const { Chat } = require("../model/chat");
 const { Message } = require("../model/message");
+const { bucket } = require("../../../database/firebase");
+const crypto = require("crypto");
+const path = require("path");
 
-// ─────────────────────────────────────────
-// GET /api/messages/chat/:chatId
-// Messages fetch karo (paginated)
-// ─────────────────────────────────────────
 async function getMessages(req, res) {
   try {
     const userId = req.user?.id || req.user?._id;
@@ -16,9 +15,9 @@ async function getMessages(req, res) {
     const chat = await Chat.findOne({ _id: chatId, participants: userId });
     if (!chat) return res.status(404).json({ error: "Chat not found or access denied" });
 
-    const page = parseInt(req.query.page) || 1;
+    const page  = parseInt(req.query.page) || 1;
     const limit = 20;
-    const skip = (page - 1) * limit;
+    const skip  = (page - 1) * limit;
 
     const [messages, total] = await Promise.all([
       Message.find({ chat: chatId })
@@ -37,9 +36,7 @@ async function getMessages(req, res) {
     res.json({
       messages: messages.reverse(),
       pagination: {
-        page,
-        limit,
-        total,
+        page, limit, total,
         totalPages: Math.ceil(total / limit),
         hasMore: skip + messages.length < total,
       },
@@ -50,43 +47,38 @@ async function getMessages(req, res) {
   }
 }
 
-// ─────────────────────────────────────────
-// POST /api/messages/upload
-// Media file upload karo
-// ─────────────────────────────────────────
+// ✅ Firebase Storage upload
 async function uploadMedia(req, res) {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const { mimetype, filename, originalname, size } = req.file;
+    const { mimetype, originalname, buffer, size } = req.file;
 
     let mediaType = "document";
     if (mimetype.startsWith("image/")) mediaType = "image";
     if (mimetype.startsWith("video/")) mediaType = "video";
 
-    const mediaUrl = `/uploads/chat/${filename}`;
+    const ext      = path.extname(originalname);
+    const filename = `chat/${crypto.randomBytes(16).toString("hex")}${ext}`;
+    const fileRef  = bucket.file(filename);
 
-    res.json({
-      mediaUrl,
-      mediaType,
-      mediaName: originalname,
-      mediaSize: size,
+    await fileRef.save(buffer, {
+      metadata: { contentType: mimetype },
+      public: true,
     });
+
+    const mediaUrl = `https://storage.googleapis.com/${bucket.name}/${filename}`;
+
+    res.json({ mediaUrl, mediaType, mediaName: originalname, mediaSize: size });
   } catch (error) {
     console.error("UPLOAD ERROR:", error);
     res.status(500).json({ error: "Upload failed" });
   }
 }
 
-// ─────────────────────────────────────────
-// PUT /api/messages/chat/:chatId/read
-// Bulk mark read
-// ─────────────────────────────────────────
 async function bulkMarkRead(req, res) {
   try {
-    const userId = req.user?.id || req.user?._id;
+    const userId  = req.user?.id || req.user?._id;
     const { chatId } = req.params;
 
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
@@ -95,11 +87,7 @@ async function bulkMarkRead(req, res) {
     if (!chat) return res.status(404).json({ error: "Chat not found" });
 
     await Message.updateMany(
-      {
-        chat: chatId,
-        sender: { $ne: userId },
-        status: { $in: ["sent", "delivered"] },
-      },
+      { chat: chatId, sender: { $ne: userId }, status: { $in: ["sent", "delivered"] } },
       { status: "seen" }
     );
 

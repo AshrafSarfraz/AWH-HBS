@@ -7,13 +7,13 @@ async function sendFCMMessage({ to, title, body, data = {} }) {
   try {
     const accessToken = await getAccessToken();
 
+    // ✅ FIX: FIREBASE_PROJECT_ID use karo — FCM_PROJECT_ID nahi
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+
     const message = {
       message: {
         token: to,
-        notification: {
-          title,
-          body,
-        },
+        notification: { title, body },
         data: Object.keys(data).reduce((acc, key) => {
           acc[key] = String(data[key]);
           return acc;
@@ -22,7 +22,7 @@ async function sendFCMMessage({ to, title, body, data = {} }) {
           priority: "high",
           notification: {
             sound: "default",
-            channelId: "chat_messages",
+            channel_id: "chat_messages",
           },
         },
         apns: {
@@ -43,7 +43,7 @@ async function sendFCMMessage({ to, title, body, data = {} }) {
     };
 
     const res = await fetch(
-      `https://fcm.googleapis.com/v1/projects/${process.env.FCM_PROJECT_ID}/messages:send`,
+      `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
       {
         method: "POST",
         headers: {
@@ -57,26 +57,18 @@ async function sendFCMMessage({ to, title, body, data = {} }) {
     const json = await res.json();
 
     if (json.error) {
-      // ✅ Stale/invalid token — DB se delete karo
       const errorCode = json.error?.status || json.error?.code;
-      if (
-        errorCode === "NOT_FOUND" ||
-        errorCode === 404 ||
-        errorCode === "UNREGISTERED" ||
-        json.error?.details?.some?.((d) => d.errorCode === "INVALID_ARGUMENT")
-      ) {
+      if (errorCode === "NOT_FOUND" || errorCode === 404 || errorCode === "UNREGISTERED") {
         console.warn(`[FCM] Stale token removed: ${to}`);
         await Device.deleteOne({ token: to }).catch(() => {});
       }
-
       throw new Error(JSON.stringify(json.error));
     }
 
-    console.log(`[FCM] Sent: "${title}" → ${to.slice(0, 20)}...`);
+    console.log(`[FCM] ✅ Sent: "${title}" → ${to.slice(0, 20)}...`);
     return json;
   } catch (err) {
     console.error("[FCM ERROR]", err.message);
-    // Error throw mat karo — notification fail hone se message fail nahi hona chahiye
   }
 }
 
