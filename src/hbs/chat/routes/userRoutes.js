@@ -21,7 +21,7 @@ router.get("/", authMiddleware, async (req, res) => {
     }
 
     // ✅ NEW: Limit lagao — bina search ke max 50, search mein max 20
-    const limit = search ? 20 : 50;
+    const limit = search ? 20000 : 50000;
 
     const users = await User.find(query, "_id name avatar email").limit(limit);
 
