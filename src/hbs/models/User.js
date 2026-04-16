@@ -20,6 +20,10 @@ const UserSchema = new mongoose.Schema(
  
     // ── Presence ─────────────────────────────────────────────────────────
     lastSeen: { type: Date, default: null },
+    privacySettings: {
+      hideOnlineStatus: { type: Boolean, default: false }, // true = koi nahi dekhega online
+      hideLastSeen:     { type: Boolean, default: false }, // true = last seen hidden
+    },
   },
   {
     collection: "Users",

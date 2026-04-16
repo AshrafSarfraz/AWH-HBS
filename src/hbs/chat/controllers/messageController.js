@@ -97,5 +97,39 @@ async function bulkMarkRead(req, res) {
     res.status(500).json({ error: "Failed to mark messages as read" });
   }
 }
+// /src/hbs/chat/controllers/messageController.js
 
-module.exports = { getMessages, uploadMedia, bulkMarkRead };
+async function getChatMedia(req, res) {
+  try {
+    const userId  = req.user?.id || req.user?._id;
+    const { chatId } = req.params;
+    const { type } = req.query; // "image" | "video" | "document" | undefined (sab chahiye)
+
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const chat = await Chat.findOne({ _id: chatId, participants: userId });
+    if (!chat) return res.status(404).json({ error: "Chat not found or access denied" });
+
+    const filter = {
+      chat: chatId,
+      deletedFor: { $ne: userId },
+      deleted: false,
+      mediaUrl: { $ne: null },
+    };
+
+    if (type) filter.mediaType = type; // filter by type if provided
+
+    const media = await Message.find(filter)
+      .select("mediaUrl mediaType mediaName createdAt sender")
+      .populate("sender", "name avatar")
+      .sort({ createdAt: -1 });
+
+    res.json(media);
+  } catch (error) {
+    console.error("GET MEDIA ERROR:", error);
+    res.status(500).json({ error: "Failed to fetch media" });
+  }
+}
+
+// module.exports mein add karo:
+module.exports = { getMessages, uploadMedia, bulkMarkRead, getChatMedia };

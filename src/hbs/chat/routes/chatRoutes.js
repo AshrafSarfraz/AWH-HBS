@@ -9,6 +9,7 @@ const {
   unmuteChat,   // ✅ NEW
 } = require("../controllers/chatController");
 const { authMiddleware } = require("../../../hbs/middleware/auth.middleware");
+const { getChatMedia } = require("../controllers/messageController");
 
 router.get("/", authMiddleware, getChats);
 router.post("/with/:participantId", authMiddleware, getOrCreateChat);
@@ -17,5 +18,6 @@ router.delete("/:chatId", authMiddleware, deleteChat);
 // ✅ NEW: Mute / Unmute
 router.post("/:chatId/mute", authMiddleware, muteChat);
 router.delete("/:chatId/mute", authMiddleware, unmuteChat);
+router.get("/:chatId/media", authMiddleware, getChatMedia);
 
 module.exports = router;
