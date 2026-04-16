@@ -7,7 +7,7 @@ const path = require("path");
 
 async function getMessages(req, res) {
   try {
-    const userId = req.user?.id || req.user?._id;
+    const userId  = req.user?.id || req.user?._id;
     const { chatId } = req.params;
 
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
@@ -19,8 +19,11 @@ async function getMessages(req, res) {
     const limit = 20;
     const skip  = (page - 1) * limit;
 
+    // ✅ deletedFor mein userId nahi hona chahiye
+    const query = { chat: chatId, deletedFor: { $ne: userId } };
+
     const [messages, total] = await Promise.all([
-      Message.find({ chat: chatId })
+      Message.find(query)
         .populate("sender", "name email avatar")
         .populate({
           path: "replyTo",
@@ -30,7 +33,7 @@ async function getMessages(req, res) {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Message.countDocuments({ chat: chatId }),
+      Message.countDocuments(query),
     ]);
 
     res.json({
@@ -47,7 +50,6 @@ async function getMessages(req, res) {
   }
 }
 
-// ✅ Firebase Storage upload
 async function uploadMedia(req, res) {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -62,13 +64,9 @@ async function uploadMedia(req, res) {
     const filename = `chat/${crypto.randomBytes(16).toString("hex")}${ext}`;
     const fileRef  = bucket.file(filename);
 
-    await fileRef.save(buffer, {
-      metadata: { contentType: mimetype },
-      public: true,
-    });
+    await fileRef.save(buffer, { metadata: { contentType: mimetype }, public: true });
 
     const mediaUrl = `https://storage.googleapis.com/${bucket.name}/${filename}`;
-
     res.json({ mediaUrl, mediaType, mediaName: originalname, mediaSize: size });
   } catch (error) {
     console.error("UPLOAD ERROR:", error);
@@ -91,10 +89,7 @@ async function bulkMarkRead(req, res) {
       { status: "seen" }
     );
 
-    await Chat.updateOne(
-      { _id: chatId },
-      { $set: { [`unreadCount.${userId}`]: 0 } }
-    );
+    await Chat.updateOne({ _id: chatId }, { $set: { [`unreadCount.${userId}`]: 0 } });
 
     res.json({ message: "All messages marked as seen" });
   } catch (error) {

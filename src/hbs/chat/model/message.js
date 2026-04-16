@@ -21,52 +21,50 @@ const MessageSchema = new Schema(
       default: "",
     },
 
-    // ✅ NEW: Reply to message
+    // Reply to message
     replyTo: {
       type: Schema.Types.ObjectId,
       ref: "Message",
       default: null,
     },
 
-    // ✅ NEW: Edit message
-    edited: {
-      type: Boolean,
-      default: false,
-    },
-    editedAt: {
-      type: Date,
-      default: null,
-    },
+    // Edit
+    edited: { type: Boolean, default: false },
+    editedAt: { type: Date, default: null },
 
-    // ✅ NEW: Media support (image, video, document)
-    mediaUrl: {
-      type: String,
-      default: null,
-    },
-    mediaType: {
-      type: String,
-      enum: ["image", "video", "document", null],
-      default: null,
-    },
-    mediaName: {
-      type: String,
-      default: null, // original file name (documents ke liye)
-    },
+    // Media
+    mediaUrl:  { type: String, default: null },
+    mediaType: { type: String, enum: ["image", "video", "document", null], default: null },
+    mediaName: { type: String, default: null },
 
+    // Status
     status: {
       type: String,
       enum: ["sent", "delivered", "seen"],
       default: "sent",
     },
-    deleted: {
-      type: Boolean,
-      default: false,
+
+    // Delete for everyone
+    deleted: { type: Boolean, default: false },
+
+    // ✅ NEW: Delete for me — userId list jo is message ko nahi dekhna chahte
+    deletedFor: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+
+    // ✅ NEW: Reactions — { userId: emoji }
+    reactions: {
+      type: Map,
+      of: String, // userId -> emoji (e.g. "❤️", "😂", "👍")
+      default: {},
     },
   },
   { timestamps: true }
 );
 
-const Message =
-  HBS_DB.models.Message || HBS_DB.model("Message", MessageSchema);
+const Message = HBS_DB.models.Message || HBS_DB.model("Message", MessageSchema);
 
 module.exports = { Message };
