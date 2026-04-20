@@ -4,7 +4,7 @@ const app = express();
 const cors = require("cors");
 require("dotenv").config();
 const path = require("path");
-const { createServer } = require("node:http");
+
 
 // ----------------- IMPORT ROUTES -----------------
 
@@ -106,9 +106,10 @@ app.use("/api/westwalk/admin-emails", AdminsEmail);
 
 
 // ----------------- SERVER & SOCKET -----------------
-const server = createServer(app);
+const server = require("http").createServer(app);
 const initializeSocket = require("./src/hbs/chat/chatSocket");
-initializeSocket(server);
+const io = initializeSocket(server);
+app.set("io", io);
 
 const PORT = process.env.PORT;
 server.listen(PORT, '0.0.0.0', () => {
