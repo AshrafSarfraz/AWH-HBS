@@ -32,4 +32,24 @@ router.get("/", authMiddleware, async (req, res) => {
   }
 });
 
+
+router.get("/:id", authMiddleware, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    const user = await User.findById(userId).select(
+      "_id name email phone avatar bio birthday"
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json(user);
+  } catch (err) {
+    console.error("Fetch user error:", err);
+    res.status(500).json({ error: "Failed to fetch user" });
+  }
+});
+
 module.exports = router;
