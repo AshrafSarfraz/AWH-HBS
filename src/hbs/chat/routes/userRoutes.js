@@ -52,4 +52,29 @@ router.get("/:id", authMiddleware, async (req, res) => {
   }
 });
 
+router.get("/privacy", authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("privacySettings");
+    res.json({
+      hideLastSeen:     user?.privacySettings?.hideLastSeen     ?? false,
+      hideOnlineStatus: user?.privacySettings?.hideOnlineStatus ?? false,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed" });
+  }
+});
+
+router.put("/privacy", authMiddleware, async (req, res) => {
+  try {
+    const { hideLastSeen, hideOnlineStatus } = req.body;
+    const update = {};
+    if (typeof hideLastSeen    === "boolean") update["privacySettings.hideLastSeen"]    = hideLastSeen;
+    if (typeof hideOnlineStatus === "boolean") update["privacySettings.hideOnlineStatus"] = hideOnlineStatus;
+    await User.findByIdAndUpdate(req.user.id, { $set: update });
+    res.json({ message: "Updated", ...req.body });
+  } catch (err) {
+    res.status(500).json({ error: "Failed" });
+  }
+});
+
 module.exports = router;
