@@ -4,27 +4,16 @@ const router = express.Router();
 const User = require("../../models/User");
 const { authMiddleware } = require("../../middleware/auth.middleware");
 
-// ─────────────────────────────────────────
-// GET /api/users
-// ✅ NEW: Search support — ?search=ahmed
-// ─────────────────────────────────────────
+// GET /api/users  — list + search
 router.get("/", authMiddleware, async (req, res) => {
   try {
     const { search } = req.query;
-
-    // Base query — apne aap ko exclude karo
     const query = { _id: { $ne: req.user.id } };
-
-    // ✅ NEW: Search by name (case-insensitive)
     if (search && search.trim()) {
       query.name = { $regex: search.trim(), $options: "i" };
     }
-
-    // ✅ NEW: Limit lagao — bina search ke max 50, search mein max 20
     const limit = search ? 20000 : 50000;
-
     const users = await User.find(query, "_id name avatar email").limit(limit);
-
     res.json(users);
   } catch (err) {
     console.error("Fetch users error:", err);
@@ -32,26 +21,8 @@ router.get("/", authMiddleware, async (req, res) => {
   }
 });
 
-
-router.get("/:id", authMiddleware, async (req, res) => {
-  try {
-    const userId = req.params.id;
-
-    const user = await User.findById(userId).select(
-      "_id name email phone avatar bio birthday"
-    );
-
-    if (!user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    res.json(user);
-  } catch (err) {
-    console.error("Fetch user error:", err);
-    res.status(500).json({ error: "Failed to fetch user" });
-  }
-});
-
+// ✅ PRIVACY — /:id se PEHLE rakhna zaroori hai
+// GET /api/users/privacy
 router.get("/privacy", authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("privacySettings");
@@ -64,16 +35,35 @@ router.get("/privacy", authMiddleware, async (req, res) => {
   }
 });
 
+// PUT /api/users/privacy
 router.put("/privacy", authMiddleware, async (req, res) => {
   try {
     const { hideLastSeen, hideOnlineStatus } = req.body;
     const update = {};
-    if (typeof hideLastSeen    === "boolean") update["privacySettings.hideLastSeen"]    = hideLastSeen;
+    if (typeof hideLastSeen     === "boolean") update["privacySettings.hideLastSeen"]     = hideLastSeen;
     if (typeof hideOnlineStatus === "boolean") update["privacySettings.hideOnlineStatus"] = hideOnlineStatus;
+    if (!Object.keys(update).length) {
+      return res.status(400).json({ error: "Nothing to update" });
+    }
     await User.findByIdAndUpdate(req.user.id, { $set: update });
     res.json({ message: "Updated", ...req.body });
   } catch (err) {
     res.status(500).json({ error: "Failed" });
+  }
+});
+
+// GET /api/users/:id  — single user
+// ⚠️ YEH HAMESHA LAST MEIN RAHEGA
+router.get("/:id", authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select(
+      "_id name email phone avatar bio birthday"
+    );
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json(user);
+  } catch (err) {
+    console.error("Fetch user error:", err);
+    res.status(500).json({ error: "Failed to fetch user" });
   }
 });
 
