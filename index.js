@@ -41,6 +41,11 @@ const AdminsAuth = require("./src/westwalk_Family/routes/AuthRoutes");
 const Complain = require("./src/westwalk_Family/routes/complaint");
 const AdminsEmail = require("./src/westwalk_Family/routes/AdminEmail");
 
+
+app.use((req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
 app.use(
   cors({
     origin: [
