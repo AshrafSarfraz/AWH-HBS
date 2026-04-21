@@ -9,28 +9,27 @@ const Device = require("./model/device");
 const { Block } = require("./model/block");
 const { isRateLimited } = require("../utils/socketratelimiter");
 const privacyCache = new Map();
-
+const CACHE_TTL = 60 * 1000; // 1 minute
 
 async function canShowOnline(userId) {
-  if (privacyCache.has(userId)) {
-    return privacyCache.get(userId);
-  }
+  const cached = privacyCache.get(`online_${userId}`);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.val;
 
   const user = await User.findById(userId).select("privacySettings");
   const result = !user?.privacySettings?.hideOnlineStatus;
-
-  privacyCache.set(userId, result);
+  privacyCache.set(`online_${userId}`, { val: result, ts: Date.now() });
   return result;
 }
 
-// 🔥 Privacy helper functions
-
-
 async function canShowLastSeen(userId) {
-  const user = await User.findById(userId).select("privacySettings");
-  return !user?.privacySettings?.hideLastSeen;
-}
+  const cached = privacyCache.get(`ls_${userId}`);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.val;
 
+  const user = await User.findById(userId).select("privacySettings");
+  const result = !user?.privacySettings?.hideLastSeen;
+  privacyCache.set(`ls_${userId}`, { val: result, ts: Date.now() });
+  return result;
+}
 
 const OnlineUsers = new Map();
 
@@ -292,12 +291,7 @@ const initializeSocket = (server) => {
             tempId,
           };
           const isMuted = chat.mutedBy?.some((id) => String(id) === otherUserId);
-
-          if (!isMuted) {
             socket.to(`chat:${chatId}`).emit("receive-message", formattedMessage);
-          } else {
-            console.log("🔕 muted — realtime skipped");
-          }
           socket.emit("message-status", {
             tempId,
             status: "sent",
@@ -563,7 +557,8 @@ const initializeSocket = (server) => {
 
     // DISCONNECT
     socket.on("disconnect", async () => {
-      privacyCache.delete(userId);
+      privacyCache.delete(`online_${userId}`);
+      privacyCache.delete(`ls_${userId}`);
       const sockets = OnlineUsers.get(userId);
       if (!sockets || !(sockets instanceof Set)) {
         OnlineUsers.delete(userId);

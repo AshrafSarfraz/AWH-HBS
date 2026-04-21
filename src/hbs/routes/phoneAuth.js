@@ -10,6 +10,8 @@ const {
   updateProfile,
   uploadAvatar,
   removeAvatar,
+  getPrivacy,      // ✅ add
+  updatePrivacy,   // ✅ add
 } = require("../controllers/phoneAuth");
 const phoneAuthMiddleware = require("../middleware/phoneAuth.middleware");
 const refreshRouter   = require("../chat/routes/refreshRoute");
@@ -29,5 +31,7 @@ router.put ("/profile/update",    phoneAuthMiddleware,     updateProfile);
 router.post("/profile/avatar",    phoneAuthMiddleware,     upload.single("file"), uploadAvatar);
 router.delete("/profile/avatar",  phoneAuthMiddleware,     removeAvatar);
 router.get ("/profile/:userId",   phoneAuthMiddleware,     getUserProfile);
+router.get  ("/privacy", phoneAuthMiddleware, getPrivacy);
+router.patch("/privacy", phoneAuthMiddleware, updatePrivacy);
 
 module.exports = router;

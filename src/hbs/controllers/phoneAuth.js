@@ -155,14 +155,22 @@ exports.getMyProfile = async (req, res) => {
 exports.getUserProfile = async (req, res) => {
   try {
     const user = await User.findById(req.params.userId).select(
-      "name avatar bio birthday lastSeen"
+      "name avatar bio birthday lastSeen privacySettings"
     );
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-
-    res.json({ success: true, user });
+    res.json({
+      success: true,
+      user: {
+        _id: user._id,
+        name: user.name,
+        avatar: user.avatar,
+        bio: user.bio,
+        birthday: user.birthday,
+        // ✅ Privacy respect karo
+        lastSeen: user.privacySettings?.hideLastSeen ? null : user.lastSeen,
+      },
+    });
   } catch (err) {
     console.error("[GET USER PROFILE]", err.message);
     res.status(500).json({ success: false, message: "Server error" });
@@ -254,7 +262,45 @@ exports.removeAvatar = async (req, res) => {
   }
 };
 
+// ─── GET PRIVACY SETTINGS ─────────────────────────────────────────────────────
+exports.getPrivacy = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select("privacySettings lastSeen");
+    if (!user) return res.status(404).json({ message: "User not found" });
 
+    res.json({ success: true, privacySettings: user.privacySettings, lastSeen: user.lastSeen });
+  } catch (err) {
+    console.error("[GET PRIVACY]", err.message);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ─── UPDATE PRIVACY SETTINGS ──────────────────────────────────────────────────
+exports.updatePrivacy = async (req, res) => {
+  try {
+    const { hideOnlineStatus, hideLastSeen } = req.body;
+
+    const update = {};
+    if (typeof hideOnlineStatus === "boolean")
+      update["privacySettings.hideOnlineStatus"] = hideOnlineStatus;
+    if (typeof hideLastSeen === "boolean")
+      update["privacySettings.hideLastSeen"] = hideLastSeen;
+
+    if (Object.keys(update).length === 0)
+      return res.status(400).json({ message: "Kuch bhi update nahi kiya" });
+
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { $set: update },
+      { new: true }
+    ).select("privacySettings");
+
+    res.json({ success: true, message: "Privacy updated", privacySettings: user.privacySettings });
+  } catch (err) {
+    console.error("[UPDATE PRIVACY]", err.message);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
 
 
 
