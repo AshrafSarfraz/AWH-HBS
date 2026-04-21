@@ -125,7 +125,15 @@ exports.verifyOtpAndLogin = async (req, res) => {
       message: "Login successful",
       token,
       refreshToken: refreshTokenValue,
-      user: { id: user._id, name: user.name, email: user.email, phone: user.phone },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        avatar: user.avatar || null,   // ✅
+        bio: user.bio || null,         // ✅
+        birthday: user.birthday || null, // ✅
+      },
     });
   } catch (err) {
     console.error("Verify OTP error:", err);
