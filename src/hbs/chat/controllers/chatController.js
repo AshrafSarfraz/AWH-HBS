@@ -20,6 +20,7 @@ async function getChats(req, res) {
     const chats = await Chat.find({
       participants: userObjId,
       deletedFor: { $ne: userObjId },
+      lastMessage: { $ne: null },
     })
       .populate("participants", "name email avatar lastSeen privacySettings")
       .populate({
