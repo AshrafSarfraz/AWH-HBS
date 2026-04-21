@@ -338,7 +338,12 @@ const initializeSocket = (server) => {
                     to: deviceToken,
                     title: message.sender.name || "New Message",
                     body: notifBody,
-                    data: { chatId, senderId: userId },
+                    data: {
+                      chatId,
+                      senderId: userId,
+                      senderName: message.sender.name || '',
+                      senderAvatar: message.sender.avatar || '',
+                    },
                   });
                 }
                 console.log(
