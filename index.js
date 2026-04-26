@@ -42,6 +42,13 @@ const Complain = require("./src/westwalk_Family/routes/complaint");
 const AdminsEmail = require("./src/westwalk_Family/routes/AdminEmail");
 
 
+const westwalkAdminFormRoutes = require("./src/westwalk_Family/routes/adminFormRoutes");
+const westwalkApprovalPriorityRoutes = require("./src/westwalk_Family/routes/approvalPriorityRoutes");
+const westwalkPublicFormRoutes = require("./src/westwalk_Family/routes/publicFormRoutes");
+const westwalkApprovalRoutes = require("./src/westwalk_Family/routes/approvalRoutes");
+
+
+
 app.use((req, res, next) => {
   res.set("Cache-Control", "no-store");
   next();
@@ -105,6 +112,10 @@ app.use("/api/westwalk", AdminsAuth);
 app.use("/api/westwalk/maintainceRequest", Complain);
 app.use("/api/westwalk/admin-emails", AdminsEmail);
 
+app.use("/api/westwalk/admin-forms", westwalkAdminFormRoutes);
+app.use("/api/westwalk/approvalPriority", westwalkApprovalPriorityRoutes);
+app.use("/api/westwalk/public-forms", westwalkPublicFormRoutes);
+app.use("/api/westwalk/approvals", westwalkApprovalRoutes);
 
 
 
