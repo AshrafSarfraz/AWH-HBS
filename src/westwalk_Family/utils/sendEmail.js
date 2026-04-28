@@ -423,8 +423,8 @@ function hrApprovalNotificationEmail(flow, nextStep) {
         <td bgcolor="#31368A" style="padding:20px 24px;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
             <td valign="middle">
-              <div style="font-size:17px;font-weight:700;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">Al Wessil Holding</div>
-              <div style="font-size:11px;color:#c7d2fe;margin-top:3px;font-family:Arial,Helvetica,sans-serif;">HR Workflow System</div>
+              <div style="font-size:17px;font-weight:700;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">WestWalk Management</div>
+              <div style="font-size:11px;color:#c7d2fe;margin-top:3px;font-family:Arial,Helvetica,sans-serif;">Approval Workflow System</div>
             </td>
             <td align="right" valign="middle">
               <span style="background:rgba(165,180,252,0.2);color:#c7d2fe;font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px;font-family:Arial,Helvetica,sans-serif;">Action Required</span>
@@ -435,7 +435,7 @@ function hrApprovalNotificationEmail(flow, nextStep) {
       <tr><td style="padding:24px 24px 8px;font-family:Arial,Helvetica,sans-serif;">
         <div style="display:inline-block;background:#eef2ff;color:#4338ca;font-size:11px;font-weight:700;padding:4px 12px;border-radius:20px;margin-bottom:12px;">${flow.formName}</div>
         <h1 style="margin:0 0 6px;font-size:20px;color:#111827;font-weight:700;">Approval Request</h1>
-        <p style="margin:0 0 20px;font-size:14px;color:#6b7280;line-height:1.6;">A new request requires your review. Please open the <strong>Al Wessil HR app</strong> to approve or reject.</p>
+        <p style="margin:0 0 20px;font-size:14px;color:#6b7280;line-height:1.6;">A new request requires your review. Please open the <strong>WestWalk</strong> to approve or reject.</p>
         <p style="font-size:11px;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:0.8px;margin:0 0 8px;">Employee Details</p>
         <table width="100%" cellpadding="8" cellspacing="0" border="0"
           style="background:#f9fafb;border-radius:10px;border-collapse:collapse;font-size:13px;margin-bottom:16px;">
@@ -458,101 +458,92 @@ function hrApprovalNotificationEmail(flow, nextStep) {
           ${answerRows}
         </table>
         <div style="background:#eef2ff;border-radius:10px;padding:14px 16px;text-align:center;">
-          <p style="margin:0;font-size:13px;color:#4338ca;font-weight:600;">Please open the HR app to take action on this request.</p>
+          <p style="margin:0;font-size:13px;color:#4338ca;font-weight:600;">Please open the Approval app to take action on this request.</p>
         </div>
       </td></tr>
       <tr><td style="padding:14px 24px 16px;border-top:1px solid #e5e7eb;font-family:Arial,Helvetica,sans-serif;text-align:center;">
         <p style="margin:0;font-size:11px;color:#9ca3af;line-height:1.6;">
-          Automated notification from <strong style="color:#6b7280;">Al Wessil Holding</strong> HR workflow system.<br/>
-          Received in error? Please contact your HR department.
+          Automated notification from <strong style="color:#6b7280;">WestWalk Management</strong> Approval workflow system.<br/>
+          Received in error? Please contact our department.
         </p>
       </td></tr>
     </table>
   </td></tr>
 </table>`;
 
-  const body = `You have a pending approval for ${flow.formName}.\nRequested by: ${flow.requesterName} (${flow.requesterEmail})\n\nPlease open the HR app to approve or reject.`;
+  const body = `You have a pending approval for ${flow.formName}.\nRequested by: ${flow.requesterName} (${flow.requesterEmail})\n\nPlease open the Approval app to approve or reject.`;
   return { subject, html, body };
 }
 
 // ─────────────────────────────────────────────
 // HR Template 2 — Fully Approved (requester ko)
 // ─────────────────────────────────────────────
-function hrApprovedEmail(flow) {
-  const subject = `Your ${flow.formName} request is fully approved`;
-
-  const approverRows = flow.approvals
-    .map((a, i, arr) => `
+function hrApprovalNotificationEmail(flow, nextStep) {
+  const subject = `Approval required: ${flow.formName} - Step ${nextStep}`;
+  const answers = flow.formDataPayload?.answers || {};
+ 
+  const answerRows = Object.entries(answers)
+    .map(([k, v], i, arr) => `
       <tr>
-        <td style="color:#6b7280;font-weight:500;${i < arr.length - 1 ? "border-bottom:1px solid #e5e7eb;" : ""}width:50%;">${a.role || a.name}</td>
-        <td style="color:#15803d;font-weight:700;text-align:right;${i < arr.length - 1 ? "border-bottom:1px solid #e5e7eb;" : ""}">&#10003; Approved</td>
+        <td style="color:#6b7280;font-weight:500;${i < arr.length - 1 ? "border-bottom:1px solid #e5e7eb;" : ""}width:40%;padding:8px;">${k}</td>
+        <td style="color:#111827;font-weight:500;text-align:right;${i < arr.length - 1 ? "border-bottom:1px solid #e5e7eb;" : ""}padding:8px;">${v}</td>
       </tr>`)
     .join("");
-
+ 
   const html = `
 <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f3f4f6" style="margin:0;padding:0;">
   <tr><td align="center" style="padding:24px 12px;">
     <table width="100%" cellpadding="0" cellspacing="0" border="0"
       style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
+ 
+      <!-- Header -->
       <tr>
         <td bgcolor="#31368A" style="padding:20px 24px;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
             <td valign="middle">
-              <div style="font-size:16px;font-weight:700;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">Al Wessil Holding</div>
-              <div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:2px;font-family:Arial,Helvetica,sans-serif;">HR Workflow System</div>
+              <div style="font-size:17px;font-weight:700;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">WestWalk Management</div>
+              <div style="font-size:11px;color:#c7d2fe;margin-top:3px;font-family:Arial,Helvetica,sans-serif;">Request Workflow System</div>
             </td>
             <td align="right" valign="middle">
-              <span style="background:rgba(187,247,208,0.2);color:#86efac;font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px;font-family:Arial,Helvetica,sans-serif;">Request Approved</span>
+              <span style="background:rgba(165,180,252,0.2);color:#c7d2fe;font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px;font-family:Arial,Helvetica,sans-serif;">Action Required</span>
             </td>
           </tr></table>
         </td>
       </tr>
-      <tr><td align="center" style="padding:24px 24px 4px;font-family:Arial,Helvetica,sans-serif;">
-        <div style="width:60px;height:60px;border-radius:50%;background:#dcfce7;display:inline-block;line-height:60px;text-align:center;font-size:28px;color:#15803d;">&#10003;</div>
-      </td></tr>
-      <tr><td align="center" style="padding:12px 24px 4px;font-family:Arial,Helvetica,sans-serif;">
-        <h1 style="margin:0 0 6px;font-size:19px;font-weight:700;color:#15803d;">Your request has been approved!</h1>
-        <p style="margin:0 0 20px;font-size:13px;color:#6b7280;line-height:1.6;">
-          Great news — your <strong>${flow.formName}</strong> has been reviewed and fully approved by all approvers.
-        </p>
-      </td></tr>
-      <tr><td style="padding:0 24px 20px;font-family:Arial,Helvetica,sans-serif;">
-        <p style="font-size:11px;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:.8px;margin:0 0 8px;">Request Summary</p>
-        <table width="100%" cellpadding="8" cellspacing="0" border="0"
+ 
+      <!-- Body -->
+      <tr><td style="padding:24px;font-family:Arial,Helvetica,sans-serif;">
+        <div style="display:inline-block;background:#eef2ff;color:#4338ca;font-size:11px;font-weight:700;padding:4px 12px;border-radius:20px;margin-bottom:12px;">${flow.formName}</div>
+        <h1 style="margin:0 0 6px;font-size:20px;color:#111827;font-weight:700;">New Approval Request</h1>
+        <p style="margin:0 0 20px;font-size:14px;color:#6b7280;line-height:1.6;">A new request requires your review. Please open the <strong>WestWalk app</strong> to approve or reject.</p>
+ 
+        <!-- Request Details -->
+        <p style="font-size:11px;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:0.8px;margin:0 0 8px;">Request Details</p>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0"
           style="background:#f9fafb;border-radius:10px;border-collapse:collapse;font-size:13px;margin-bottom:16px;">
-          <tr>
-            <td style="color:#6b7280;font-weight:500;border-bottom:1px solid #e5e7eb;width:40%;">Form</td>
-            <td style="color:#111827;font-weight:500;border-bottom:1px solid #e5e7eb;text-align:right;">${flow.formName}</td>
-          </tr>
-          <tr>
-            <td style="color:#6b7280;font-weight:500;border-bottom:1px solid #e5e7eb;">Submitted by</td>
-            <td style="color:#111827;font-weight:500;border-bottom:1px solid #e5e7eb;text-align:right;">${flow.requesterName}</td>
-          </tr>
-          <tr>
-            <td style="color:#6b7280;font-weight:500;">Status</td>
-            <td style="color:#15803d;font-weight:700;text-align:right;">Approved</td>
-          </tr>
+          ${answerRows}
         </table>
-        <p style="font-size:11px;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:.8px;margin:0 0 8px;">Approvers</p>
-        <table width="100%" cellpadding="8" cellspacing="0" border="0"
-          style="background:#f9fafb;border-radius:10px;border-collapse:collapse;font-size:13px;">
-          ${approverRows}
-        </table>
+ 
+        <div style="background:#eef2ff;border-radius:10px;padding:14px 16px;text-align:center;">
+          <p style="margin:0;font-size:13px;color:#4338ca;font-weight:600;">Please open the WestWalk app to take action on this request.</p>
+        </div>
       </td></tr>
+ 
+      <!-- Footer -->
       <tr><td style="padding:14px 24px 16px;border-top:1px solid #e5e7eb;font-family:Arial,Helvetica,sans-serif;text-align:center;">
         <p style="margin:0;font-size:11px;color:#9ca3af;line-height:1.6;">
-          Automated notification from <strong style="color:#6b7280;">Al Wessil Holding</strong> HR workflow system.<br/>
-          Questions? Please contact your HR department.
+          Automated notification from <strong style="color:#6b7280;">WestWalk Management</strong>.<br/>
+          Received in error? Please contact the admin.
         </p>
       </td></tr>
+ 
     </table>
   </td></tr>
 </table>`;
-
-  const body = `Your ${flow.formName} request has been approved by all approvers.`;
+ 
+  const body = `You have a pending approval for ${flow.formName}.\n\nPlease open the WestWalk app to approve or reject.`;
   return { subject, html, body };
 }
-
 // ─────────────────────────────────────────────
 // HR Template 3 — Rejected (requester ko)
 // ─────────────────────────────────────────────
@@ -569,8 +560,8 @@ function hrRejectedEmail(flow, stepIndex, comment) {
         <td bgcolor="#31368A" style="padding:20px 24px;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
             <td valign="middle">
-              <div style="font-size:16px;font-weight:700;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">Al Wessil Holding</div>
-              <div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:2px;font-family:Arial,Helvetica,sans-serif;">HR Workflow System</div>
+              <div style="font-size:16px;font-weight:700;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">WestWalk Management</div>
+              <div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:2px;font-family:Arial,Helvetica,sans-serif;">Approval Workflow System</div>
             </td>
             <td align="right" valign="middle">
               <span style="background:rgba(254,202,202,0.15);color:#fca5a5;font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px;font-family:Arial,Helvetica,sans-serif;">Request Rejected</span>
@@ -585,7 +576,7 @@ function hrRejectedEmail(flow, stepIndex, comment) {
         <h1 style="margin:0 0 6px;font-size:19px;font-weight:700;color:#b91c1c;">Your request was not approved</h1>
         <p style="margin:0 0 20px;font-size:13px;color:#6b7280;line-height:1.6;">
           Unfortunately, your <strong>${flow.formName}</strong> request has been rejected.
-          Please review the reason below and contact HR if you have questions.
+          Please review the reason below and contact department if you have questions.
         </p>
       </td></tr>
       <tr><td style="padding:0 24px 20px;font-family:Arial,Helvetica,sans-serif;">
@@ -616,8 +607,8 @@ function hrRejectedEmail(flow, stepIndex, comment) {
       </td></tr>
       <tr><td style="padding:14px 24px 16px;border-top:1px solid #e5e7eb;font-family:Arial,Helvetica,sans-serif;text-align:center;">
         <p style="margin:0;font-size:11px;color:#9ca3af;line-height:1.6;">
-          Automated notification from <strong style="color:#6b7280;">Al Wessil Holding</strong> HR workflow system.<br/>
-          Questions? Please contact your HR department.
+          Automated notification from <strong style="color:#6b7280;">WestWalk Management</strong> Approval workflow system.<br/>
+          Questions? Please contact our department.
         </p>
       </td></tr>
     </table>
@@ -638,4 +629,4 @@ module.exports = {
   hrApprovalNotificationEmail,
   hrApprovedEmail,
   hrRejectedEmail,
-};
+}; 
