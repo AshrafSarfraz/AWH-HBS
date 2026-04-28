@@ -1,11 +1,11 @@
 // src/hr-system/controller/publicFormController.js
 
-const Form           = require("../models/Form");
+const Form             = require("../models/Form");
 const ApprovalPriority = require("../models/AprovalPriority");
-const ApprovalFlow   = require("../models/ApprovalFlow");
+const ApprovalFlow     = require("../models/ApprovalFlow");
 const { sendEmail, hrApprovalNotificationEmail } = require("../utils/sendEmail");
 
-// GET /api/forms
+// GET /api/westwalk/admin-forms
 async function getForms(req, res) {
   try {
     const forms = await Form.find({ active: true })
@@ -18,7 +18,7 @@ async function getForms(req, res) {
   }
 }
 
-// GET /api/forms/:formKey
+// GET /api/westwalk/public-forms/:formKey
 async function getFormDefinition(req, res) {
   try {
     const { formKey } = req.params;
@@ -31,19 +31,12 @@ async function getFormDefinition(req, res) {
   }
 }
 
-// POST /api/forms/:formKey/submit
-// body = { employee:{name,email,...}, answers:{...} }
+// POST /api/westwalk/public-forms/:formKey/submit
+// body = { answers:{...} }   <-- employee info NOT required anymore
 async function submitForm(req, res) {
   try {
     const { formKey } = req.params;
-    const { employee, answers = {} } = req.body || {};
-
-    if (!employee || !employee.name || !employee.email) {
-      return res.status(400).json({ error: "Missing employee info (name/email required)" });
-    }
-
-    const requesterName  = String(employee.name).trim();
-    const requesterEmail = String(employee.email).toLowerCase().trim();
+    const { answers = {} } = req.body || {};
 
     // 1) Load form
     const formDef = await Form.findOne({ formKey, active: true }).lean();
@@ -67,16 +60,16 @@ async function submitForm(req, res) {
         comment:    null,
       }));
 
-    // 4) Create approval flow
+    // 4) Create approval flow — no employee info needed
     const flowDoc = await ApprovalFlow.create({
       formName:        formKey,
       formId:          formDef._id,
-      requesterName,
-      requesterEmail,
+      requesterName:   "Public",
+      requesterEmail:  "public@form.com",
       currentStep:     1,
       status:          "Pending",
       approvals:       approvalsArray,
-      formDataPayload: { employee, answers },
+      formDataPayload: { answers },
     });
 
     // 5) Notify first approver
@@ -90,9 +83,10 @@ async function submitForm(req, res) {
 
     return res.json({
       ok:      true,
-      message: "Form submitted and first approver notified",
+      message: "Form submitted successfully",
       flowId:  flowDoc._id,
     });
+
   } catch (err) {
     console.error("submitForm error", err);
     return res.status(500).json({ error: err.message });
