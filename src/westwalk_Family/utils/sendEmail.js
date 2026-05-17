@@ -255,19 +255,12 @@ function hrApprovalNotificationEmail(flow, nextStep) {
 function hrApprovedEmail(flow) {
   const subject = `Your ${flow.formName} request is fully approved`;
 
-  const approverRows = flow.approvals
-    .map((a, i, arr) => `
-      <tr>
-        <td style="color:#6b7280;font-weight:500;${i < arr.length - 1 ? "border-bottom:1px solid #e5e7eb;" : ""}width:50%;padding:8px;">${a.role || a.name}</td>
-        <td style="color:#15803d;font-weight:700;text-align:right;${i < arr.length - 1 ? "border-bottom:1px solid #e5e7eb;" : ""}padding:8px;">&#10003; Approved</td>
-      </tr>`)
-    .join("");
-
   const html = `
 <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f3f4f6" style="margin:0;padding:0;">
   <tr><td align="center" style="padding:24px 12px;">
     <table width="100%" cellpadding="0" cellspacing="0" border="0"
       style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
+
       <tr>
         <td bgcolor="#31368A" style="padding:20px 24px;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
@@ -281,49 +274,39 @@ function hrApprovedEmail(flow) {
           </tr></table>
         </td>
       </tr>
-      <tr><td align="center" style="padding:24px 24px 4px;font-family:Arial,Helvetica,sans-serif;">
-        <div style="width:60px;height:60px;border-radius:50%;background:#dcfce7;display:inline-block;line-height:60px;text-align:center;font-size:28px;color:#15803d;">&#10003;</div>
+
+      <tr><td align="center" style="padding:28px 24px 8px;font-family:Arial,Helvetica,sans-serif;">
+        <div style="width:64px;height:64px;border-radius:50%;background:#dcfce7;display:inline-block;line-height:64px;text-align:center;font-size:30px;color:#15803d;">&#10003;</div>
       </td></tr>
-      <tr><td align="center" style="padding:12px 24px 4px;font-family:Arial,Helvetica,sans-serif;">
-        <h1 style="margin:0 0 6px;font-size:19px;font-weight:700;color:#15803d;">Your request has been approved!</h1>
-        <p style="margin:0 0 20px;font-size:13px;color:#6b7280;line-height:1.6;">
-          Great news — your <strong>${flow.formName}</strong> has been reviewed and fully approved by all approvers.
+
+      <tr><td align="center" style="padding:8px 32px 24px;font-family:Arial,Helvetica,sans-serif;">
+        <h1 style="margin:0 0 10px;font-size:20px;font-weight:700;color:#15803d;">Your Request Has Been Approved!</h1>
+        <p style="margin:0 0 6px;font-size:14px;color:#374151;line-height:1.7;">
+          Dear <strong>${flow.requesterName || "Applicant"}</strong>,
         </p>
+        <p style="margin:0 0 20px;font-size:14px;color:#6b7280;line-height:1.7;">
+          Your <strong>${flow.formName}</strong> request has been fully approved by all approvers.
+          Please find the approved form attached to this email.
+        </p>
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 20px;text-align:center;">
+          <p style="margin:0;font-size:13px;color:#15803d;font-weight:600;">
+            📎 Your approved form is attached as a PDF.
+          </p>
+        </div>
       </td></tr>
-      <tr><td style="padding:0 24px 20px;font-family:Arial,Helvetica,sans-serif;">
-        <p style="font-size:11px;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:.8px;margin:0 0 8px;">Request Summary</p>
-        <table width="100%" cellpadding="8" cellspacing="0" border="0"
-          style="background:#f9fafb;border-radius:10px;border-collapse:collapse;font-size:13px;margin-bottom:16px;">
-          <tr>
-            <td style="color:#6b7280;font-weight:500;border-bottom:1px solid #e5e7eb;width:40%;">Form</td>
-            <td style="color:#111827;font-weight:500;border-bottom:1px solid #e5e7eb;text-align:right;">${flow.formName}</td>
-          </tr>
-          <tr>
-            <td style="color:#6b7280;font-weight:500;border-bottom:1px solid #e5e7eb;">Submitted by</td>
-            <td style="color:#111827;font-weight:500;border-bottom:1px solid #e5e7eb;text-align:right;">${flow.requesterName}</td>
-          </tr>
-          <tr>
-            <td style="color:#6b7280;font-weight:500;">Status</td>
-            <td style="color:#15803d;font-weight:700;text-align:right;">Approved</td>
-          </tr>
-        </table>
-        <p style="font-size:11px;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:.8px;margin:0 0 8px;">Approvers</p>
-        <table width="100%" cellpadding="0" cellspacing="0" border="0"
-          style="background:#f9fafb;border-radius:10px;border-collapse:collapse;font-size:13px;">
-          ${approverRows}
-        </table>
-      </td></tr>
+
       <tr><td style="padding:14px 24px 16px;border-top:1px solid #e5e7eb;font-family:Arial,Helvetica,sans-serif;text-align:center;">
         <p style="margin:0;font-size:11px;color:#9ca3af;line-height:1.6;">
-          Automated notification from <strong style="color:#6b7280;">WestWalk Management</strong> Approval workflow system.<br/>
-          Questions? Please contact Our department.
+          Automated notification from <strong style="color:#6b7280;">WestWalk Management</strong>.<br/>
+          This is an automated message. Please do not reply.
         </p>
       </td></tr>
+
     </table>
   </td></tr>
 </table>`;
 
-  const body = `Your ${flow.formName} request has been approved by all approvers.`;
+  const body = `Dear ${flow.requesterName || "Applicant"}, your ${flow.formName} request has been approved. Please find the approved form attached.`;
   return { subject, html, body };
 }
 
