@@ -10,7 +10,8 @@ const {
   getPendingForApprover,
   getAllApprovals, 
   deleteFlow,  
-  markPrinted,   // 👈 import karo
+  markPrinted,
+  sendPdfByEmail,   // 👈 import karo
 } = require("../controller/approvalController");
 
 // -----------------------------------
@@ -24,5 +25,6 @@ router.put("/:flowId/printed", markPrinted);
 router.post("/:flowId/action", handleApprovalAction);  // ✅ GET → POST
 router.get("/:flowId", getFlowStatus);
 router.delete("/:flowId", deleteFlow);
+router.post("/:flowId/send-pdf", sendPdfByEmail);
 
 module.exports = router;
