@@ -1,4 +1,7 @@
 // src/hr-system/controller/approvalController.js
+const htmlPdf = require("html-pdf-node");
+const { buildApprovalPDF } = require("../utils/buildApprovalPdf");
+
 
 const ApprovalFlow = require("../models/ApprovalFlow");
 const {
@@ -113,17 +116,37 @@ async function handleApprovalAction(req, res) {
     }
 
     /* ===== LAST STEP — FULLY APPROVED ===== */
-    if (stepNum === flow.approvals.length) {
-      flow.status = "Approved";
-      await flow.save();
-      try {
-        const { subject, html, body } = hrApprovedEmail(flow);
-        await sendEmail({ to: flow.requesterEmail, subject, body, html });
-      } catch (e) {
-        console.error("sendEmail (final approve) failed:", e);
-      }
-      return res.json({ ok: true, message: "Request is FULLY APPROVED. 🎉" });
-    }
+ /* ===== LAST STEP — FULLY APPROVED ===== */
+if (stepNum === flow.approvals.length) {
+  flow.status = "Approved";
+  await flow.save();
+
+  try {
+    const { subject, html, body } = hrApprovedEmail(flow);
+
+    // PDF generate karo
+    const pdfBuffer = await htmlPdf.generatePdf(
+      { content: buildApprovalPDF(flow) },
+      { format: "A4", printBackground: true }
+    );
+
+    await sendEmail({
+      to:      flow.requesterEmail,
+      subject,
+      body,
+      html,
+      attachments: [{
+        filename:    `${flow.formName}-approved.pdf`,
+        content:     pdfBuffer,
+        contentType: "application/pdf",
+      }],
+    });
+  } catch (e) {
+    console.error("sendEmail (final approve) failed:", e);
+  }
+
+  return res.json({ ok: true, message: "Request is FULLY APPROVED. 🎉" });
+}
 
     /* ===== NEXT APPROVER ===== */
     const nextStep = stepNum + 1;
