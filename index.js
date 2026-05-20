@@ -10,7 +10,7 @@ const path = require("path");
 
 
 // HR System
-const { router: employeeRouter, startEmployeeCron } = require("./src/database/hrSystem");
+const {router: employeeRouter, startEmployeeCron, syncEmployees} = require("./src/database/hrSystem");
 const adminFormRoutes = require("./src/hr-system/routes/adminFormRoutes");
 const approvalPriorityRoutes = require("./src/hr-system/routes/approvalPriorityRoutes");
 const publicFormRoutes = require("./src/hr-system/routes/publicFormRoutes");
@@ -130,16 +130,24 @@ const io = initializeSocket(server);
 app.set("io", io);
 
 const PORT = process.env.PORT;
-server.listen(PORT, '0.0.0.0', () => {
+
+
+
+server.listen(PORT, '0.0.0.0', async () => {
   console.log("Server running on port", PORT);
-  startEmployeeCron();
 
   const mongoose = require("mongoose");
-  const MONGO_URI = process.env.MONGO_URI_HBS;
-  mongoose.connect(MONGO_URI, {
+
+  await mongoose.connect(process.env.MONGO_URI_HBS, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
   });
-  mongoose.connection.on('connected', () => console.log('MongoDB connected'));
-  mongoose.connection.on('error', (err) => console.log('MongoDB error:', err));
+
+  console.log("MongoDB connected");
+
+  // 🔥 ALWAYS fresh data on restart
+  await syncEmployees();
+  console.log("Initial sync done ✅");
+
+  startEmployeeCron();
 });

@@ -19,16 +19,45 @@ const sqlConfig = {
 const employeeSchema = new mongoose.Schema({}, { collection: 'employees', strict: false });
 const Employee = HR_DB.model('Employee', employeeSchema);
 
+// async function syncEmployees() {
+//   const pool = await sql.connect(sqlConfig);
+//   const result = await pool.request().query('SELECT * FROM EmployeeData');
+//   await Employee.deleteMany({});
+//   await Employee.insertMany(result.recordset);
+//   console.log(`✅ Synced ${result.recordset.length} employees`);
+// }
+
+// function startEmployeeCron() {
+//   cron.schedule('0 22 * * *', syncEmployees, { timezone: 'Asia/Qatar' });
+// }
+
+
 async function syncEmployees() {
-  const pool = await sql.connect(sqlConfig);
-  const result = await pool.request().query('SELECT * FROM EmployeeData');
-  await Employee.deleteMany({});
-  await Employee.insertMany(result.recordset);
-  console.log(`✅ Synced ${result.recordset.length} employees`);
+  try {
+    const pool = await sql.connect(sqlConfig);
+    const result = await pool.request().query('SELECT * FROM EmployeeData');
+
+    const data = result.recordset;
+
+    if (!data.length) {
+      console.log("⚠️ No data from SQL, skipping sync");
+      return;
+    }
+
+    await Employee.deleteMany({});
+    await Employee.insertMany(data);
+
+    console.log(`✅ Synced ${data.length} employees`);
+  } catch (err) {
+    console.error("❌ Sync failed:", err.message);
+  }
 }
 
 function startEmployeeCron() {
-  cron.schedule('0 22 * * *', syncEmployees, { timezone: 'Asia/Qatar' });
+  cron.schedule('0 2 * * *', async () => {
+    console.log("Daily sync running...");
+    await syncEmployees();
+  }, { timezone: 'Asia/Qatar' });
 }
 
 router.get('/employees', async (req, res) => {
@@ -47,4 +76,4 @@ router.post('/employees/sync', async (req, res) => {
   res.send('✅ Manual sync complete');
 });
 
-module.exports = { router, startEmployeeCron };
+module.exports = { router, startEmployeeCron, syncEmployees};
