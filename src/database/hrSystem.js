@@ -76,4 +76,21 @@ router.post('/employees/sync', async (req, res) => {
   res.send('✅ Manual sync complete');
 });
 
+
+
+router.get('/employees/check-email', async (req, res) => {
+  try {
+    const missing = await Employee.find({
+      $or: [{ Email: null }, { Email: '' }, { Email: { $exists: false } }]
+    });
+    console.log(missing.length, 'employees without email');
+    res.json({ count: missing.length, employees: missing });
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+router.get('/employees/debug/:id', async (req, res) => {
+  const docs = await Employee.find({ EmployeeCode: req.params.id });
+  res.json(docs);
+});
 module.exports = { router, startEmployeeCron, syncEmployees};
