@@ -1,0 +1,218 @@
+                                                                Api's
+
+=> WestWalk Family User Data From System 
+--------------------------------------------------------------------------------------------------------------
+
+Every copy all data from src/ww-family/sql_connect_get_&_PushData.js andpaste to Index.js 
+and then start server and then run api's
+
+http://localhost:3000/hr/employees           get data from sql
+http://localhost:3000/hr/employees/sync      push data to mongodb
+http://localhost:3000/hr/employees/mongo     get data from mongodb to react-native
+--------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+
+
+
+Maintaince (admin Panel)
+
+http://localhost:3000/api/westwalk/register
+
+
+
+http://localhost:3000/api/westwalk/admin-emails         post method                 { "email": "westwalk04@gmail.com",  "label": "Property Manager" }
+http://localhost:3000/api/westwalk/maintainceRequest   
+http://localhost:3000/api/westwalk/maintainceRequest/69ca47e734f62da45a4ea26c       ( put method )
+
+
+
+
+
+
+
+
+
+
+
+
+
+=> Hala B Saudi Api 
+
+--------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+
+Admin
+
+Create Admin	POST	    http://localhost:3000/api/hbs/admin        { "name": "Fatema Husain1",  "email": "fatema@halabsaudi.1111",   "password": "11111",   "role": "Admin"}
+Get All Admins	GET	        http://localhost:3000/api/hbs/admin
+Get Admin by ID	GET	        http://localhost:3000/api/hbs/admin/:id
+Update Admin	PUT	        http://localhost:3000/api/hbs/admin/:id
+Delete Admin	DELETE    	http://localhost:3000/api/hbs/admin/:id
+
+
+Brand
+Create Admin	POST	    http://localhost:3000/api/hbs/Brand        { "name": "Fatema Husain1",  "email": "fatema@halabsaudi.1111",   "password": "11111",   "role": "Admin"}
+Get All Admins	GET	        http://localhost:3000/api/hbs/admin
+Get Admin by ID	GET	        http://localhost:3000/api/hbs/admin/:id
+Update Admin	PUT	        http://localhost:3000/api/hbs/admin/:id
+Delete Admin	DELETE    	http://localhost:3000/api/hbs/admin/:id
+
+
+
+cities
+Create Admin	POST	    http://localhost:3000/api/hbs/cities       { "name": "Fatema Husain1",  "email": "fatema@halabsaudi.1111",   "password": "11111",   "role": "Admin"}
+Get All Admins	GET	        http://localhost:3000/api/hbs/cities
+Get Admin by ID	GET	        http://localhost:3000/api/hbs/cities /:id
+Update Admin	PUT	        http://localhost:3000/api/hbs/cities/:id
+Delete Admin	DELETE    	http://localhost:3000/api/hbs/cities/:id
+
+
+
+cities
+Create Admin	POST	    http://localhost:3000/api/hbs/groupAccount      { "name": "Fatema Husain1",  "email": "fatema@halabsaudi.1111",   "password": "11111",   "role": "Admin"}
+Get All Admins	GET	        http://localhost:3000/api/hbs/groupAccount
+Get Admin by ID	GET	        http://localhost:3000/api/hbs/groupAccount/:id
+Update Admin	PUT	        http://localhost:3000/api/hbs/groupAccount/:id
+Delete Admin	DELETE      http://localhost:3000/api/hbs/groupAccount/:id
+
+
+
+Group Brands 
+Create Admin	POST	    http://localhost:3000/api/hbs/groupBrands   
+Get All Admins	GET	        http://localhost:3000/api/hbs/groupBrands
+Get Admin by ID	GET	        http://localhost:3000/api/hbs/groupBrands/:id
+Update Admin	PUT	        http://localhost:3000/api/hbs/groupBrands/:id
+Delete Admin	DELETE      http://localhost:3000/api/hbs/groupBrands/:id
+
+
+
+
+
+
+
+
+
+
+--------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+=> HR System Approval  For redeem code 
+--------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------
+
+
+
+A brief description of what this project does, e.g.,
+
+This is a Node.js backend project using Express and MongoDB. 
+It provides REST APIs for managing users and authentication.
+
+## Technologies Used
+
+- Node.js
+- Express.js
+- MongoDB (Mongoose)
+- dotenv
+- Nodemon (development)
+
+
+## Installation
+
+1. Clone the repository:
+git clone https://github.com/username/my-backend.git
+
+--------------------------------------------------------------------------------------------------------------
+
+## folder structure  q use karte hain?
+
+a) Separation of Concerns (SoC)
+
+index.js → Server aur app ka entry point
+routes/ → URL endpoints define karte hain
+controllers/ → Route logic ko handle karte hain
+models/ → Database schema aur data structure
+config/ → Configuration like DB connection
+middleware/ → Authentication, logging, error handling
+utils/ → Helper functions
+
+
+✅ Fayda:
+Readable & Maintainable: Bada project bhi easily samajh aata hai
+Scalable: Naye features add karna simple
+Team-friendly: Multiple developers easily kaam kar sakte hain
+
+
+
+b) Modularity
+
+Agar aapko sirf user module ko alag server me move karna ho → easy
+Ya fir naye route add karna ho → sirf routes/ aur controllers/ me changes
+
+2️⃣ Security Measures for Node.js Backend
+
+Backend secure karna bohot important hai. Main common techniques bata raha hoon:
+a) Environment Variables
+.env me sensitive info rakho: DB password, JWT secret, API keys
+Never hardcode passwords or secrets
+Access via process.env.MONGO_URI, process.env.JWT_SECRET
+
+
+--------------------------------------------------------------------------------------------------------------
