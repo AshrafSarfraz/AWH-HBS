@@ -1,37 +1,68 @@
-// controllers/phoneAuth.js
+// src/hbs/controllers/phoneAuth.js
+//
+// SECURITY FIXES:
+//  1) OTP ab plain text me store nahi hota — bcrypt hash hota hai. Agar DB
+//     leak ho to bhi kisi ka OTP nahi padha ja sakta.
+//  2) Max 5 ghalat koshishen. Pehle unlimited thin — 6 digit OTP ko 5 minute
+//     me brute force karna bilkul mumkin tha.
+//  3) OTP `Math.random()` ke bajaye `crypto.randomInt()` se banta hai
+//     (Math.random cryptographically secure nahi hai).
+//  4) Avatar upload ab compress hota hai aur UBLA buckets par bhi chalta hai.
+//
+// ⚠️ User model bhi update karna hai (otpCode → otpHash, otpAttempts add).
+
 const crypto = require("crypto");
-const path = require("path");
+const bcrypt = require("bcryptjs");
+
 const User = require("../models/User");
 const { sendWhatsAppOtp } = require("../utils/telebu");
 const { generateToken } = require("../utils/generateToken");
 const { RefreshToken } = require("../models/RefreshToken");
 const { bucket } = require("../../database/firebase");
+const { uploadMediaBuffer } = require("../utils/mediaUpload");
+const { invalidateAuthCache } = require("../middleware/auth.middleware");
 
 const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 const OTP_EXPIRY_MS = 5 * 60 * 1000;
+const MAX_OTP_ATTEMPTS = 5;
+const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 function generateOtp() {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  // crypto.randomInt — predictable nahi
+  return String(crypto.randomInt(100000, 1000000));
 }
 
-// ─── REGISTER ─────────────────────────────────────────────────────────────────
-exports.registerUser = async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────
+// POST /api/phoneAuth/register
+// ─────────────────────────────────────────────────────────────────────
+exports.registerUser = async (req, res, next) => {
   try {
     const { name, email, phone } = req.body;
-    if (!name || !email || !phone)
+    if (!name || !email || !phone) {
       return res.status(400).json({ message: "name, email, phone is required" });
+    }
 
-    const normalizedEmail = email.toLowerCase().trim();
-    const normalizedPhone = phone.trim();
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const normalizedPhone = String(phone).trim();
 
-    if (await User.findOne({ email: normalizedEmail }))
-      return res.status(400).json({ message: "Email already registered" });
+    // Pehle do alag queries thin — ab ek
+    const existing = await User.findOne({
+      $or: [{ email: normalizedEmail }, { phone: normalizedPhone }],
+    })
+      .select("email phone")
+      .lean();
 
-    if (await User.findOne({ phone: normalizedPhone }))
-      return res.status(400).json({ message: "Phone already registered" });
+    if (existing) {
+      return res.status(409).json({
+        message:
+          existing.email === normalizedEmail
+            ? "Email already registered"
+            : "Phone already registered",
+      });
+    }
 
     const user = await User.create({
-      name,
+      name: String(name).trim(),
       email: normalizedEmail,
       phone: normalizedPhone,
       isPhoneVerified: false,
@@ -39,23 +70,40 @@ exports.registerUser = async (req, res) => {
 
     return res.status(201).json({
       message: "User created successfully",
-      user: { id: user._id, name: user.name, email: user.email, phone: user.phone },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+      },
     });
   } catch (err) {
-    console.error("Register error:", err);
-    return res.status(500).json({ message: "Server error" });
+    // Unique index race condition
+    if (err.code === 11000) {
+      return res.status(409).json({ message: "Email ya phone already registered" });
+    }
+    next(err);
   }
 };
 
-// ─── REQUEST OTP ──────────────────────────────────────────────────────────────
-exports.requestOtp = async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────
+// POST /api/phoneAuth/request-otp
+// ─────────────────────────────────────────────────────────────────────
+exports.requestOtp = async (req, res, next) => {
   try {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ message: "Phone Number Required" });
 
-    const normalizedPhone = phone.trim();
-    const user = await User.findOne({ phone: normalizedPhone });
-    if (!user) return res.status(404).json({ message: "No user found on this phone number" });
+    const normalizedPhone = String(phone).trim();
+    const user = await User.findOne({ phone: normalizedPhone }).select(
+      "_id lastOtpSentAt"
+    );
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ message: "No user found on this phone number" });
+    }
 
     const now = Date.now();
     if (user.lastOtpSentAt) {
@@ -64,61 +112,110 @@ exports.requestOtp = async (req, res) => {
         const remaining = Math.ceil((OTP_RESEND_COOLDOWN_MS - diff) / 1000);
         return res.status(429).json({
           message: `Please wait ${remaining} seconds before requesting a new OTP`,
+          retryAfter: remaining,
         });
       }
     }
 
     const otp = generateOtp();
-    user.otpCode = otp;
-    user.otpExpiresAt = new Date(now + OTP_EXPIRY_MS);
-    user.lastOtpSentAt = new Date(now);
-    await user.save();
+    const otpHash = await bcrypt.hash(otp, 8); // 8 rounds — OTP 5 min zinda rehta hai
+
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          otpHash,
+          otpExpiresAt: new Date(now + OTP_EXPIRY_MS),
+          lastOtpSentAt: new Date(now),
+          otpAttempts: 0, // naya OTP = fresh attempts
+        },
+      }
+    );
 
     try {
       await sendWhatsAppOtp(normalizedPhone, otp);
     } catch (e) {
       console.error("WhatsApp OTP send failed:", e?.response?.data || e.message);
-      return res.status(500).json({ message: "Failed to send OTP via WhatsApp" });
+      return res.status(502).json({ message: "Failed to send OTP via WhatsApp" });
     }
 
     return res.json({ message: "OTP sent via WhatsApp" });
   } catch (err) {
-    console.error("Request OTP error:", err);
-    return res.status(500).json({ message: "Error while sending OTP" });
+    next(err);
   }
 };
 
-// ─── VERIFY OTP & LOGIN ───────────────────────────────────────────────────────
-exports.verifyOtpAndLogin = async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────
+// POST /api/phoneAuth/verify-otp
+// ─────────────────────────────────────────────────────────────────────
+exports.verifyOtpAndLogin = async (req, res, next) => {
   try {
     const { phone, code } = req.body;
-    if (!phone || !code)
+    if (!phone || !code) {
       return res.status(400).json({ message: "phone and code are required" });
+    }
 
-    const normalizedPhone = phone.trim();
+    const normalizedPhone = String(phone).trim();
     const inputOtp = String(code).trim();
 
-    const user = await User.findOne({ phone: normalizedPhone });
-    if (!user) return res.status(404).json({ message: "No user found on this phone number" });
-    if (!user.otpCode || !user.otpExpiresAt)
-      return res.status(400).json({ message: "No OTP requested" });
-    if (user.otpExpiresAt.getTime() < Date.now())
-      return res.status(400).json({ message: "OTP expired, please request again" });
-    if (user.otpCode !== inputOtp)
-      return res.status(400).json({ message: "OTP wrong" });
+    // otpHash `select: false` hai — explicitly mangna parega
+    const user = await User.findOne({ phone: normalizedPhone }).select(
+      "+otpHash otpExpiresAt otpAttempts name email phone avatar bio birthday"
+    );
 
-    user.isPhoneVerified = true;
-    user.otpCode = null;
-    user.otpExpiresAt = null;
-    await user.save();
+    if (!user) {
+      return res
+        .status(404)
+        .json({ message: "No user found on this phone number" });
+    }
+    if (!user.otpHash || !user.otpExpiresAt) {
+      return res.status(400).json({ message: "No OTP requested" });
+    }
+    if (user.otpExpiresAt.getTime() < Date.now()) {
+      return res.status(400).json({ message: "OTP expired, please request again" });
+    }
+
+    // ✅ Brute force protection — pehle bilkul nahi thi
+    if ((user.otpAttempts || 0) >= MAX_OTP_ATTEMPTS) {
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { otpHash: null, otpExpiresAt: null } }
+      );
+      return res.status(429).json({
+        message: "Bohot zyada ghalat koshishen. Naya OTP mangwayein.",
+      });
+    }
+
+    const ok = await bcrypt.compare(inputOtp, user.otpHash);
+    if (!ok) {
+      await User.updateOne({ _id: user._id }, { $inc: { otpAttempts: 1 } });
+      const left = MAX_OTP_ATTEMPTS - (user.otpAttempts || 0) - 1;
+      return res.status(400).json({
+        message: "OTP wrong",
+        attemptsLeft: Math.max(left, 0),
+      });
+    }
+
+    // Sahi OTP — foran invalidate karo (replay attack rokne ke liye)
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          isPhoneVerified: true,
+          otpHash: null,
+          otpExpiresAt: null,
+          otpAttempts: 0,
+        },
+      }
+    );
 
     const token = generateToken(user);
-
     const refreshTokenValue = crypto.randomBytes(40).toString("hex");
+
     await RefreshToken.create({
       userId: user._id,
       token: refreshTokenValue,
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
     });
 
     return res.json({
@@ -130,42 +227,43 @@ exports.verifyOtpAndLogin = async (req, res) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
-        avatar: user.avatar || null,   // ✅
-        bio: user.bio || null,         // ✅
-        birthday: user.birthday || null, // ✅
+        avatar: user.avatar || null,
+        bio: user.bio || null,
+        birthday: user.birthday || null,
       },
     });
   } catch (err) {
-    console.error("Verify OTP error:", err);
-    return res.status(500).json({ message: "Verify OTP error" });
+    next(err);
   }
 };
 
-// ─── GET MY PROFILE ───────────────────────────────────────────────────────────
-exports.getMyProfile = async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────
+// Profile
+// ─────────────────────────────────────────────────────────────────────
+exports.getMyProfile = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id).select(
-      "name email phone avatar bio birthday lastSeen isPhoneVerified createdAt"
-    );
+    const user = await User.findById(req.user._id)
+      .select("name email phone avatar bio birthday lastSeen isPhoneVerified createdAt")
+      .lean();
 
     if (!user) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-
     res.json({ success: true, user });
   } catch (err) {
-    console.error("[GET PROFILE]", err.message);
-    res.status(500).json({ success: false, message: "Server error" });
+    next(err);
   }
 };
 
-// ─── GET ANY USER PROFILE ─────────────────────────────────────────────────────
-exports.getUserProfile = async (req, res) => {
+exports.getUserProfile = async (req, res, next) => {
   try {
-    const user = await User.findById(req.params.userId).select(
-      "name avatar bio birthday lastSeen privacySettings"
-    );
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    const user = await User.findById(req.params.userId)
+      .select("name avatar bio birthday lastSeen privacySettings")
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
 
     res.json({
       success: true,
@@ -175,140 +273,167 @@ exports.getUserProfile = async (req, res) => {
         avatar: user.avatar,
         bio: user.bio,
         birthday: user.birthday,
-        // ✅ Privacy respect karo
         lastSeen: user.privacySettings?.hideLastSeen ? null : user.lastSeen,
       },
     });
   } catch (err) {
-    console.error("[GET USER PROFILE]", err.message);
-    res.status(500).json({ success: false, message: "Server error" });
+    next(err);
   }
 };
 
-// ─── UPDATE PROFILE ───────────────────────────────────────────────────────────
-exports.updateProfile = async (req, res) => {
+exports.updateProfile = async (req, res, next) => {
   try {
     const { name, bio, birthday } = req.body;
-
     const updates = {};
 
-    if (name !== undefined) updates.name = name.trim();
-    if (bio !== undefined) updates.bio = bio.trim();
-    if (birthday !== undefined) updates.birthday = new Date(birthday);
+    if (name !== undefined) updates.name = String(name).trim();
+    if (bio !== undefined) updates.bio = String(bio).trim().slice(0, 150);
+    if (birthday !== undefined) {
+      const d = new Date(birthday);
+      if (!Number.isNaN(d.getTime())) updates.birthday = d;
+    }
+
+    if (!Object.keys(updates).length) {
+      return res.status(400).json({ success: false, message: "Nothing to update" });
+    }
 
     const user = await User.findByIdAndUpdate(
       req.user._id,
       { $set: updates },
       { new: true }
-    ).select("name email phone avatar bio birthday");
+    )
+      .select("name email phone avatar bio birthday")
+      .lean();
 
-    res.json({
-      success: true,
-      message: "Profile updated",
-      user,
-    });
+    invalidateAuthCache(String(req.user._id)); // cached naam purana na rahe
+
+    res.json({ success: true, message: "Profile updated", user });
   } catch (err) {
-    console.error("[UPDATE PROFILE]", err.message);
-    res.status(500).json({ success: false, message: "Server error" });
+    next(err);
   }
 };
 
-// ─── UPLOAD AVATAR ────────────────────────────────────────────────────────────
-exports.uploadAvatar = async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────
+// Avatar — ab compress hota hai aur UBLA bucket par bhi chalta hai
+// ─────────────────────────────────────────────────────────────────────
+exports.uploadAvatar = async (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No image uploaded" });
     }
 
-    const ext = path.extname(req.file.originalname) || ".jpg";
-    const fileName = `avatars/${req.user._id}_${Date.now()}${ext}`;
-    const fileRef = bucket.file(fileName);
-
-    await fileRef.save(req.file.buffer, {
-      metadata: { contentType: req.file.mimetype },
-      public: true,
+    const { mediaUrl, thumbnailUrl } = await uploadMediaBuffer({
+      buffer: req.file.buffer,
+      mimetype: req.file.mimetype,
+      originalname: req.file.originalname,
+      folder: `avatars/${req.user._id}`,
     });
-
-    const avatarUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
 
     const user = await User.findByIdAndUpdate(
       req.user._id,
-      { avatar: avatarUrl },
+      { $set: { avatar: thumbnailUrl || mediaUrl } },
       { new: true }
-    ).select("name avatar bio");
+    )
+      .select("name avatar bio")
+      .lean();
+
+    invalidateAuthCache(String(req.user._id));
 
     res.json({
       success: true,
       message: "Avatar updated",
-      avatar: avatarUrl,
+      avatar: user.avatar,
+      avatarFull: mediaUrl,
       user,
     });
   } catch (err) {
-    console.error("[UPLOAD AVATAR]", err.message);
-    res.status(500).json({ success: false, message: "Upload failed" });
+    next(err);
   }
 };
 
-// ─── REMOVE AVATAR ────────────────────────────────────────────────────────────
-exports.removeAvatar = async (req, res) => {
+exports.removeAvatar = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id).select("avatar");
+    const user = await User.findById(req.user._id).select("avatar").lean();
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    await User.updateOne({ _id: req.user._id }, { $set: { avatar: null } });
+    invalidateAuthCache(String(req.user._id));
+
+    // File delete background me — response ka intezaar na kare
     if (user.avatar) {
-      try {
-        const match = user.avatar.match(/storage\.googleapis\.com\/[^/]+\/(.+)/);
-        if (match) await bucket.file(decodeURIComponent(match[1])).delete();
-      } catch { /* ignore */ }
+      setImmediate(async () => {
+        try {
+          const m =
+            user.avatar.match(/storage\.googleapis\.com\/[^/]+\/(.+)/) ||
+            user.avatar.match(/\/o\/([^?]+)/);
+          if (m) await bucket.file(decodeURIComponent(m[1])).delete();
+        } catch {
+          /* file pehle se nahi hai — koi baat nahi */
+        }
+      });
     }
 
-    await User.findByIdAndUpdate(req.user._id, { $set: { avatar: null } });
     return res.json({ message: "Avatar removed" });
   } catch (err) {
-    console.error("[REMOVE AVATAR]", err.message);
-    return res.status(500).json({ message: "Server error" });
+    next(err);
   }
 };
 
-// ─── GET PRIVACY SETTINGS ─────────────────────────────────────────────────────
-exports.getPrivacy = async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────
+// Privacy
+// ─────────────────────────────────────────────────────────────────────
+exports.getPrivacy = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user._id).select("privacySettings lastSeen");
+    const user = await User.findById(req.user._id)
+      .select("privacySettings lastSeen")
+      .lean();
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    res.json({ success: true, privacySettings: user.privacySettings, lastSeen: user.lastSeen });
+    res.json({
+      success: true,
+      privacySettings: user.privacySettings,
+      lastSeen: user.lastSeen,
+    });
   } catch (err) {
-    console.error("[GET PRIVACY]", err.message);
-    res.status(500).json({ success: false, message: "Server error" });
+    next(err);
   }
 };
 
-// ─── UPDATE PRIVACY SETTINGS ──────────────────────────────────────────────────
-exports.updatePrivacy = async (req, res) => {
+exports.updatePrivacy = async (req, res, next) => {
   try {
     const { hideOnlineStatus, hideLastSeen } = req.body;
-
     const update = {};
+
     if (typeof hideOnlineStatus === "boolean")
       update["privacySettings.hideOnlineStatus"] = hideOnlineStatus;
     if (typeof hideLastSeen === "boolean")
       update["privacySettings.hideLastSeen"] = hideLastSeen;
 
-    if (Object.keys(update).length === 0)
+    if (!Object.keys(update).length) {
       return res.status(400).json({ message: "Kuch bhi update nahi kiya" });
+    }
 
     const user = await User.findByIdAndUpdate(
       req.user._id,
       { $set: update },
       { new: true }
-    ).select("privacySettings");
+    )
+      .select("privacySettings")
+      .lean();
 
-    res.json({ success: true, message: "Privacy updated", privacySettings: user.privacySettings });
+    // Socket layer ka presence cache refresh
+    try {
+      require("../chat/chatSocket").invalidateUser(String(req.user._id));
+    } catch {
+      /* socket abhi load nahi hua */
+    }
+
+    res.json({
+      success: true,
+      message: "Privacy updated",
+      privacySettings: user.privacySettings,
+    });
   } catch (err) {
-    console.error("[UPDATE PRIVACY]", err.message);
-    res.status(500).json({ success: false, message: "Server error" });
+    next(err);
   }
 };
-
-
-

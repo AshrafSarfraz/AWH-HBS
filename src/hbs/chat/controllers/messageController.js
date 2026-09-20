@@ -1,114 +1,208 @@
-// /src/hbs/chat/controllers/messageController.js
+// src/hbs/chat/controllers/messageController.js
+//
+// KYA BADLA:
+//  - `.lean()` har read query par — mongoose documents banane ka overhead khatam.
+//  - `countDocuments` sirf pehli page par (pehle HAR page par chalta tha).
+//  - Cursor pagination (`before`) add ki — deep pages par `.skip()` slow hota
+//    hai. Purana `page` param bhi kaam karta rahega, app tootegi nahi.
+//  - `getChatMedia` par pagination — pehle chat ka SAARA media ek saath aata tha.
+//  - Upload ab compress + thumbnail banata hai aur chat membership verify
+//    karta hai (pehle koi bhi logged-in user kuch bhi upload kar sakta tha).
+
+const mongoose = require("mongoose");
 const { Chat } = require("../model/chat");
 const { Message } = require("../model/message");
-const { bucket } = require("../../../database/firebase");
-const crypto = require("crypto");
-const path = require("path");
+const { uploadMediaBuffer } = require("../../utils/mediaUpload");
 
-async function getMessages(req, res) {
-  try {
-    const userId  = req.user?.id || req.user?._id;
-    const { chatId } = req.params;
+const MAX_PAGE_SIZE = 50;
+const DEFAULT_PAGE_SIZE = 25;
 
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-
-    const chat = await Chat.findOne({ _id: chatId, participants: userId });
-    if (!chat) return res.status(404).json({ error: "Chat not found or access denied" });
-
-    const page  = parseInt(req.query.page) || 1;
-    const limit = 20;
-    const skip  = (page - 1) * limit;
-
-    // ✅ deletedFor mein userId nahi hona chahiye
-    const query = { chat: chatId, deletedFor: { $ne: userId } };
-
-    const [messages, total] = await Promise.all([
-      Message.find(query)
-        .populate("sender", "name email avatar")
-        .populate({
-          path: "replyTo",
-          select: "text sender mediaUrl mediaType mediaName deleted",
-          populate: { path: "sender", select: "name" },
-        })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      Message.countDocuments(query),
-    ]);
-
-    res.json({
-      messages: messages.reverse(),
-      pagination: {
-        page, limit, total,
-        totalPages: Math.ceil(total / limit),
-        hasMore: skip + messages.length < total,
-      },
-    });
-  } catch (error) {
-    console.error("GET MESSAGE ERROR:", error);
-    res.status(500).json({ error: "Failed to fetch messages" });
-  }
+function userIdOf(req) {
+  return String(req.user?.id || req.user?._id || "");
 }
 
-async function uploadMedia(req, res) {
-  try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-
-    const { mimetype, originalname, buffer, size } = req.file;
-
-    let mediaType = "document";
-    if (mimetype.startsWith("image/")) mediaType = "image";
-    if (mimetype.startsWith("video/")) mediaType = "video";
-
-    const ext      = path.extname(originalname);
-    const filename = `chat/${crypto.randomBytes(16).toString("hex")}${ext}`;
-    const fileRef  = bucket.file(filename);
-
-    await fileRef.save(buffer, { metadata: { contentType: mimetype }, public: true });
-
-    const mediaUrl = `https://storage.googleapis.com/${bucket.name}/${filename}`;
-    res.json({ mediaUrl, mediaType, mediaName: originalname, mediaSize: size });
-  } catch (error) {
-    console.error("UPLOAD ERROR:", error);
-    res.status(500).json({ error: "Upload failed" });
-  }
+/** Sirf chat ke participant ko aage jane do */
+async function assertParticipant(chatId, userId) {
+  if (!mongoose.isValidObjectId(chatId)) return null;
+  return Chat.findOne({ _id: chatId, participants: userId })
+    .select("_id participants")
+    .lean();
 }
 
-async function bulkMarkRead(req, res) {
+// ─────────────────────────────────────────────────────────────────────
+// GET /api/messages/chat/:chatId
+// ?limit=25&before=<ISO date | messageId>   (recommended)
+// ?page=2                                    (purana tareeqa, ab bhi chalega)
+// ─────────────────────────────────────────────────────────────────────
+async function getMessages(req, res, next) {
   try {
-    const userId  = req.user?.id || req.user?._id;
+    const userId = userIdOf(req);
     const { chatId } = req.params;
-
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const chat = await Chat.findOne({ _id: chatId, participants: userId });
-    if (!chat) return res.status(404).json({ error: "Chat not found" });
+    const chat = await assertParticipant(chatId, userId);
+    if (!chat)
+      return res.status(404).json({ error: "Chat not found or access denied" });
 
-    await Message.updateMany(
-      { chat: chatId, sender: { $ne: userId }, status: { $in: ["sent", "delivered"] } },
-      { status: "seen" }
+    const limit = Math.min(
+      parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE,
+      MAX_PAGE_SIZE
     );
 
-    await Chat.updateOne({ _id: chatId }, { $set: { [`unreadCount.${userId}`]: 0 } });
+    const query = { chat: chatId, deletedFor: { $ne: userId } };
 
-    res.json({ message: "All messages marked as seen" });
-  } catch (error) {
-    console.error("BULK READ ERROR:", error);
-    res.status(500).json({ error: "Failed to mark messages as read" });
+    // ── Cursor mode (tez) ──────────────────────────────────────────────
+    let usingCursor = false;
+    if (req.query.before) {
+      usingCursor = true;
+      const before = req.query.before;
+      if (mongoose.isValidObjectId(before)) {
+        const anchor = await Message.findById(before).select("createdAt").lean();
+        if (anchor) query.createdAt = { $lt: anchor.createdAt };
+      } else {
+        const d = new Date(before);
+        if (!Number.isNaN(d.getTime())) query.createdAt = { $lt: d };
+      }
+    }
+
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const skip = usingCursor ? 0 : (page - 1) * limit;
+
+    const finder = Message.find(query)
+      .populate("sender", "name avatar")
+      .populate({
+        path: "replyTo",
+        select: "text sender mediaUrl thumbnailUrl mediaType mediaName deleted",
+        populate: { path: "sender", select: "name" },
+      })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit + 1) // ek extra taake hasMore pata chale bina count ke
+      .lean();
+
+    // Total sirf pehli request par — har page par count karna mehnga tha
+    const needTotal = !usingCursor && page === 1;
+    const [rows, total] = await Promise.all([
+      finder,
+      needTotal ? Message.countDocuments(query) : Promise.resolve(null),
+    ]);
+
+    const hasMore = rows.length > limit;
+    const messages = hasMore ? rows.slice(0, limit) : rows;
+
+    res.json({
+      messages: messages.reverse(), // frontend ko oldest→newest chahiye
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: total == null ? null : Math.ceil(total / limit),
+        hasMore,
+        // agli request me isay `before` ke taur par bhejein
+        nextCursor: messages.length ? messages[0].createdAt : null,
+      },
+    });
+  } catch (err) {
+    next(err);
   }
 }
-// /src/hbs/chat/controllers/messageController.js
 
-async function getChatMedia(req, res) {
+// ─────────────────────────────────────────────────────────────────────
+// POST /api/messages/upload   (multipart: file, optional chatId)
+// ─────────────────────────────────────────────────────────────────────
+async function uploadMedia(req, res, next) {
   try {
-    const userId  = req.user?.id || req.user?._id;
-    const { chatId } = req.params;
-    const { type } = req.query; // "image" | "video" | "document" | undefined (sab chahiye)
+    const userId = userIdOf(req);
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
+    // Agar chatId diya gaya ho to verify karo ke user us chat ka member hai
+    const { chatId } = req.body;
+    if (chatId) {
+      const chat = await assertParticipant(chatId, userId);
+      if (!chat) return res.status(403).json({ error: "Access denied for this chat" });
+    }
+
+    const result = await uploadMediaBuffer({
+      buffer: req.file.buffer,
+      mimetype: req.file.mimetype,
+      originalname: req.file.originalname,
+      folder: "chat",
+    });
+
+    // Purane frontend ke liye same keys, plus naye fields
+    res.json({
+      mediaUrl: result.mediaUrl,
+      thumbnailUrl: result.thumbnailUrl,
+      mediaType: result.mediaType,
+      mediaName: result.mediaName,
+      mediaSize: result.mediaSize,
+      mediaWidth: result.width,
+      mediaHeight: result.height,
+    });
+  } catch (err) {
+    console.error("UPLOAD ERROR:", err);
+    next(err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// PUT /api/messages/chat/:chatId/read
+// ─────────────────────────────────────────────────────────────────────
+async function bulkMarkRead(req, res, next) {
+  try {
+    const userId = userIdOf(req);
+    const { chatId } = req.params;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
-    const chat = await Chat.findOne({ _id: chatId, participants: userId });
-    if (!chat) return res.status(404).json({ error: "Chat not found or access denied" });
+    const chat = await assertParticipant(chatId, userId);
+    if (!chat) return res.status(404).json({ error: "Chat not found" });
+
+    // Dono updates parallel — pehle sequential the
+    await Promise.all([
+      Message.updateMany(
+        {
+          chat: chatId,
+          sender: { $ne: userId },
+          status: { $in: ["sent", "delivered"] },
+        },
+        { $set: { status: "seen" } }
+      ),
+      Chat.updateOne(
+        { _id: chatId },
+        { $set: { [`unreadCount.${userId}`]: 0 } }
+      ),
+    ]);
+
+    // Sender ko live bata do (agar socket attached hai)
+    const io = req.app.get("io");
+    if (io) {
+      const other = chat.participants
+        .map(String)
+        .find((id) => id !== String(userId));
+      if (other) io.to(`user:${other}`).emit("chat-read", { chatId });
+    }
+
+    res.json({ message: "All messages marked as seen" });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// GET /api/chat/:chatId/media?type=image&limit=30&before=<ISO>
+// ─────────────────────────────────────────────────────────────────────
+async function getChatMedia(req, res, next) {
+  try {
+    const userId = userIdOf(req);
+    const { chatId } = req.params;
+    const { type } = req.query;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+    const chat = await assertParticipant(chatId, userId);
+    if (!chat)
+      return res.status(404).json({ error: "Chat not found or access denied" });
+
+    const limit = Math.min(parseInt(req.query.limit, 10) || 30, MAX_PAGE_SIZE);
 
     const filter = {
       chat: chatId,
@@ -116,20 +210,32 @@ async function getChatMedia(req, res) {
       deleted: false,
       mediaUrl: { $ne: null },
     };
+    if (["image", "video", "document", "audio"].includes(type)) {
+      filter.mediaType = type;
+    }
+    if (req.query.before) {
+      const d = new Date(req.query.before);
+      if (!Number.isNaN(d.getTime())) filter.createdAt = { $lt: d };
+    }
 
-    if (type) filter.mediaType = type; // filter by type if provided
-
-    const media = await Message.find(filter)
-      .select("mediaUrl mediaType mediaName createdAt sender")
+    const rows = await Message.find(filter)
+      .select("mediaUrl thumbnailUrl mediaType mediaName mediaSize createdAt sender")
       .populate("sender", "name avatar")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(limit + 1)
+      .lean();
 
-    res.json(media);
-  } catch (error) {
-    console.error("GET MEDIA ERROR:", error);
-    res.status(500).json({ error: "Failed to fetch media" });
+    const hasMore = rows.length > limit;
+    const media = hasMore ? rows.slice(0, limit) : rows;
+
+    res.json({
+      media,
+      hasMore,
+      nextCursor: media.length ? media[media.length - 1].createdAt : null,
+    });
+  } catch (err) {
+    next(err);
   }
 }
 
-// module.exports mein add karo:
 module.exports = { getMessages, uploadMedia, bulkMarkRead, getChatMedia };

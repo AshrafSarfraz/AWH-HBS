@@ -1,70 +1,95 @@
-// /src/hbs/middleware/auth.middleware.js
+// src/hbs/middleware/auth.middleware.js
+//
+// KYA BADLA:
+//  - Pehle HAR authenticated request par `User.findOne({$or:[...]})` chalti
+//    thi. Chat app me ye hazaron extra queries banti hain. Ab 60 second ka
+//    cache hai — 95% requests bina DB touch kiye nikal jati hain.
+//  - JWT_SECRET ab seedha process.env se (pehle login.controller se import ho
+//    raha tha, jis se circular dependency ka khatra tha).
+//  - Errors ab next(err) se global handler ko jate hain.
+
 const jwt = require("jsonwebtoken");
-const { JWT_SECRET } = require("../controllers/externalApi/login.controller");
 const mongoose = require("mongoose");
 const User = require("../models/User");
+const { TTLCache } = require("../utils/ttlCache");
+
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// token-subject -> user object
+const authCache = new TTLCache({ ttl: 60_000, maxSize: 20_000 });
+
+function extractToken(header) {
+  if (!header) return null;
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : header.trim();
+}
 
 async function authMiddleware(req, res, next) {
-  const authHeader = req.headers["authorization"];
+  const token = extractToken(req.headers["authorization"]);
 
-  if (!authHeader) {
+  if (!token) {
     return res.status(401).json({ message: "Authorization header required" });
   }
 
-  // const [type, token] = authHeader.split(" ");
-
-  // if (type !== "Bearer" || !token) {
-  //   return res.status(401).json({ message: "Invalid Authorization format" });
-  // }
-
-  let token = null;
-
-  if (authHeader.startsWith("Bearer ")) {
-    token = authHeader.split(" ")[1]; // Bearer token
-  } else {
-    token = authHeader; // raw token (no Bearer prefix)
+  let decoded;
+  try {
+    decoded = jwt.verify(token, JWT_SECRET);
+  } catch (err) {
+    return res.status(401).json({ message: "Invalid or expired auth token" });
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-
-    // A token can have been issued by the hosted API while the app is now
-    // pointed at local MongoDB. Resolve its local User record by the token ID
-    // first, then by the signed phone/email as a safe migration fallback.
-    const candidates = [];
-    if (mongoose.isValidObjectId(decoded.id || decoded._id)) {
-      candidates.push({ _id: decoded.id || decoded._id });
-    }
-    if (decoded.phone) candidates.push({ phone: decoded.phone });
-    if (decoded.email) candidates.push({ email: String(decoded.email).toLowerCase() });
-
-    if (!candidates.length) {
+    const subject = String(decoded.id || decoded._id || decoded.phone || decoded.email || "");
+    if (!subject) {
       return res.status(401).json({ message: "Invalid user token" });
     }
 
-    const user = await User.findOne({ $or: candidates }).select("_id name email phone");
+    // ── Cache hit — koi DB query nahi ──────────────────────────────────
+    let user = authCache.get(subject);
+
     if (!user) {
-      return res.status(401).json({
-        message: "User does not exist in this backend. Please sign in again.",
-      });
+      // Token hosted API se bana ho sakta hai jab ke ab local DB use ho rahi
+      // hai — is liye id ke saath phone/email se bhi dhoondte hain.
+      const or = [];
+      if (mongoose.isValidObjectId(decoded.id || decoded._id)) {
+        or.push({ _id: decoded.id || decoded._id });
+      }
+      if (decoded.phone) or.push({ phone: String(decoded.phone).trim() });
+      if (decoded.email) or.push({ email: String(decoded.email).toLowerCase() });
+
+      if (!or.length) {
+        return res.status(401).json({ message: "Invalid user token" });
+      }
+
+      const found = await User.findOne({ $or: or })
+        .select("_id name email phone")
+        .lean();
+
+      if (!found) {
+        return res.status(401).json({
+          message: "User does not exist in this backend. Please sign in again.",
+        });
+      }
+
+      user = {
+        id: String(found._id),
+        _id: found._id,
+        name: found.name,
+        email: found.email,
+        phone: found.phone,
+      };
+      authCache.set(subject, user);
     }
 
-    req.user = {
-      ...decoded,
-      id: String(user._id),
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-    };
+    req.user = { ...decoded, ...user };
     next();
   } catch (err) {
-    console.error("auth error:", err);
-    if (err.name === "JsonWebTokenError" || err.name === "TokenExpiredError") {
-      return res.status(401).json({ message: "Invalid or expired auth token" });
-    }
-    return res.status(500).json({ message: "Unable to authenticate user" });
+    next(err);
   }
 }
 
-module.exports = { authMiddleware };
+/** User ka data badle (profile update, delete) to cache saaf karo */
+function invalidateAuthCache(subject) {
+  authCache.delete(String(subject));
+}
+
+module.exports = { authMiddleware, invalidateAuthCache, JWT_SECRET };

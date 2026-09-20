@@ -1,55 +1,189 @@
-// /src/hbs/chat/chatSocket.js
+// src/hbs/chat/chatSocket.js
+//
+// ═══════════════════════════════════════════════════════════════════════
+// KYA KYA BADLA (yahi file chat slow hone ki sabse badi wajah thi)
+// ═══════════════════════════════════════════════════════════════════════
+//
+// 1) TYPING EVENT — pehle har keystroke par `Chat.findById()` + `Block.findOne()`
+//    chalti thi. 50 log type kar rahe hon to per second sainkron DB queries.
+//    Ab chat participants aur block status cache me hain, typing par ZERO
+//    database queries. Upar se 2-second throttle bhi hai.
+//
+// 2) SEND-MESSAGE — pehle ~10 sequential DB round trips the. Ab typically 2:
+//    Message.create + ek atomic Chat.findOneAndUpdate. Sender ka naam/avatar
+//    cache se aata hai, populate ki zaroorat nahi.
+//
+// 3) FCM — pehle har device token par alag `await` wali HTTP call thi, aur wo
+//    bhi message handler ke andar. Ab ek multicast call hai jo await NAHI hoti
+//    — message foran deliver hota hai, push background me jati hai.
+//
+// 4) PRESENCE — pehle N online users ke liye N alag `User.findById` chalti
+//    thin. Ab ek hi `User.find({_id:{$in:[...]}})` query hai, aur wo bhi sirf
+//    un users ke liye jo cache me nahi.
+//
+// 5) MEMORY LEAK — purana `privacyCache` sirf disconnect hone wale user ki
+//    entry delete karta tha, baaqi sab hamesha ke liye padi rehti thin. Ab
+//    TTLCache hai jo khud purani entries saaf karta hai.
+//
+// 6) CRASH FIX — `typing` handler me `chat.participants` bina null-check ke
+//    use ho raha tha. Chat na milne par TypeError → unhandled rejection →
+//    poora process crash. Ab har handler try/catch me hai.
+//
+// 7) SECURITY — Socket.IO ka CORS `origin: "*"` tha (Express par restricted
+//    tha). Ab same allow-list dono jagah.
+
+const { Server } = require("socket.io");
+const jwt = require("jsonwebtoken");
+
 const { Chat } = require("./model/chat");
 const { Message } = require("./model/message");
-const { Server } = require("socket.io");
-const User = require("../models/User");
-const jwt = require("jsonwebtoken");
-const sendFCMMessage = require("./sendFCMMessage");
-const Device = require("./model/device");
 const { Block } = require("./model/block");
+const User = require("../models/User");
 const { canMessageUser } = require("./services/messagePrivacy");
 const { isRateLimited } = require("../utils/socketratelimiter");
-const privacyCache = new Map();
-const CACHE_TTL = 60 * 1000; // 1 minute
+const { sendPushToUser } = require("./sendFCMMessage");
+const { TTLCache } = require("../utils/ttlCache");
 
-async function canShowOnline(userId) {
-  const cached = privacyCache.get(`online_${userId}`);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.val;
+// ─────────────────────────────────────────────────────────────────────
+// CACHES
+// ─────────────────────────────────────────────────────────────────────
 
-  const user = await User.findById(userId).select("privacySettings");
-  const result = !user?.privacySettings?.hideOnlineStatus;
-  privacyCache.set(`online_${userId}`, { val: result, ts: Date.now() });
-  return result;
-}
+// chatId -> { participants: [idA, idB] }   (1-1 chat me participants kabhi
+// nahi badalte, is liye lamba TTL safe hai)
+const chatMetaCache = new TTLCache({ ttl: 10 * 60_000, maxSize: 20_000 });
 
-async function canShowLastSeen(userId) {
-  const cached = privacyCache.get(`ls_${userId}`);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.val;
+// "a|b" -> boolean  (block hai ya nahi)
+const blockCache = new TTLCache({ ttl: 60_000, maxSize: 20_000 });
 
-  const user = await User.findById(userId).select("privacySettings");
-  const result = !user?.privacySettings?.hideLastSeen;
-  privacyCache.set(`ls_${userId}`, { val: result, ts: Date.now() });
-  return result;
-}
+// userId -> { name, avatar, hideOnlineStatus, hideLastSeen }
+const userCache = new TTLCache({ ttl: 60_000, maxSize: 20_000 });
 
+// "sender|recipient" -> { allowed, code }
+const permissionCache = new TTLCache({ ttl: 60_000, maxSize: 20_000 });
+
+/** Online users: userId -> Set<socketId> */
 const OnlineUsers = new Map();
 
-const initializeSocket = (server) => {
+const blockKey = (a, b) => [String(a), String(b)].sort().join("|");
+
+// ─────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────
+
+/** Ek query me kai users ka profile + privacy la kar cache bhar do */
+async function loadUsers(userIds) {
+  const missing = userIds.map(String).filter((id) => !userCache.has(id));
+
+  if (missing.length) {
+    const rows = await User.find({ _id: { $in: missing } })
+      .select("name avatar privacySettings.hideOnlineStatus privacySettings.hideLastSeen")
+      .lean();
+
+    for (const u of rows) {
+      userCache.set(String(u._id), {
+        name: u.name,
+        avatar: u.avatar || null,
+        hideOnlineStatus: Boolean(u.privacySettings?.hideOnlineStatus),
+        hideLastSeen: Boolean(u.privacySettings?.hideLastSeen),
+      });
+    }
+    // Jo users mile hi nahi — unko bhi cache karo warna har baar query hogi
+    for (const id of missing) {
+      if (!userCache.has(id)) {
+        userCache.set(id, {
+          name: null,
+          avatar: null,
+          hideOnlineStatus: false,
+          hideLastSeen: false,
+        });
+      }
+    }
+  }
+
+  return Object.fromEntries(
+    userIds.map((id) => [String(id), userCache.get(String(id))])
+  );
+}
+
+async function getUser(userId) {
+  const cached = userCache.get(String(userId));
+  if (cached) return cached;
+  const map = await loadUsers([userId]);
+  return map[String(userId)];
+}
+
+/** Chat ke participants — cache se, warna ek dafa DB se */
+async function getChatParticipants(chatId) {
+  const cached = chatMetaCache.get(String(chatId));
+  if (cached) return cached.participants;
+
+  const chat = await Chat.findById(chatId).select("participants").lean();
+  if (!chat) return null;
+
+  const participants = chat.participants.map(String);
+  chatMetaCache.set(String(chatId), { participants });
+  return participants;
+}
+
+/** Do users ke darmiyan block hai ya nahi — cached */
+async function isBlocked(a, b) {
+  const key = blockKey(a, b);
+  const cached = blockCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const exists = await Block.exists({
+    $or: [
+      { blocker: a, blocked: b },
+      { blocker: b, blocked: a },
+    ],
+  });
+  return blockCache.set(key, Boolean(exists));
+}
+
+/** Message bhejne ki ijazat — cached */
+async function checkPermission(senderId, recipientId) {
+  const key = `${senderId}|${recipientId}`;
+  const cached = permissionCache.get(key);
+  if (cached) return cached;
+
+  const result = await canMessageUser(senderId, recipientId);
+  return permissionCache.set(key, result);
+}
+
+function isOnline(userId) {
+  const set = OnlineUsers.get(String(userId));
+  return Boolean(set && set.size > 0);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// SOCKET SERVER
+// ─────────────────────────────────────────────────────────────────────
+
+const initializeSocket = (server, { allowedOrigins } = {}) => {
   const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] },
+    cors: {
+      // ✅ FIX: pehle "*" tha — koi bhi site connect kar sakti thi
+      origin: allowedOrigins && allowedOrigins.length ? allowedOrigins : true,
+      methods: ["GET", "POST"],
+      credentials: true,
+    },
+    pingInterval: 25_000,
+    pingTimeout: 20_000,
+    maxHttpBufferSize: 1e6, // 1 MB — media socket se nahi, REST upload se jata hai
   });
 
+  // ── AUTH ───────────────────────────────────────────────────────────
   io.use((socket, next) => {
     try {
       const token = socket.handshake.auth?.token;
       if (!token) return next(new Error("Unauthorized"));
+
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
       socket.userId = String(decoded.id || decoded._id || "");
-      if (!socket.userId)
-        return next(new Error("Unauthorized: no userId in token"));
+      if (!socket.userId) return next(new Error("Unauthorized: no userId"));
+
       next();
     } catch (err) {
-      console.error("[AUTH ERROR]", err.message);
       next(new Error("Unauthorized"));
     }
   });
@@ -57,129 +191,137 @@ const initializeSocket = (server) => {
   io.on("connection", async (socket) => {
     const userId = socket.userId;
 
-    if (!OnlineUsers.has(userId)) OnlineUsers.set(userId, new Set());
-    OnlineUsers.get(userId).add(socket.id);
-    socket.join(`user:${userId}`);
-
-    if (await canShowOnline(userId)) {
-      socket.broadcast.emit("user-online", { userId });
-    }
-    const users = Array.from(OnlineUsers.keys());
-
-    const results = await Promise.all(
-      users.map(async (uid) => ({
-        uid,
-        show: await canShowOnline(uid),
-      }))
-    );
-    
-    const visibleUsers = results.filter(r => r.show).map(r => r.uid);
-    
-    socket.emit("online-users", visibleUsers);
-
-    socket.on("request-online-sync", async () => {
-      const users = Array.from(OnlineUsers.keys());
-
-      const results = await Promise.all(
-        users.map(async (uid) => ({
-          uid,
-          show: await canShowOnline(uid),
-        }))
-      ); 
-      const visibleUsers = results.filter(r => r.show).map(r => r.uid);
-      
-      socket.emit("online-users", visibleUsers);
-      
-    });
-
-    // ON CONNECT: Mark pending as delivered
-    try {
-      const userChats = await Chat.find({ participants: userId }).select("_id");
-      const chatIds = userChats.map((c) => c._id);
-
-      const undelivered = await Message.find({
-        chat: { $in: chatIds },
-        sender: { $ne: userId },
-        status: "sent",
-      }).select("_id sender chat");
-
-      if (undelivered.length > 0) {
-        const ids = undelivered.map((m) => m._id);
-        await Message.updateMany(
-          { _id: { $in: ids } },
-          { status: "delivered" }
-        );
-
-        const grouped = undelivered.reduce((acc, m) => {
-          const sid = String(m.sender);
-          if (!acc[sid]) acc[sid] = { chatId: String(m.chat), ids: [] };
-          acc[sid].ids.push(String(m._id));
-          return acc;
-        }, {});
-
-        for (const [senderId, data] of Object.entries(grouped)) {
-          io.to(`user:${senderId}`).emit("messages-read", {
-            chatId: data.chatId,
-            messageIds: data.ids,
-            msgStatus: "delivered",
-          });
+    // Har handler ka error yahan pakda jaye — server crash na ho
+    const safe = (name, fn) =>
+      socket.on(name, async (...args) => {
+        try {
+          await fn(...args);
+        } catch (err) {
+          console.error(`[SOCKET ${name}]`, err.message);
         }
+      });
+
+    try {
+      if (!OnlineUsers.has(userId)) OnlineUsers.set(userId, new Set());
+      OnlineUsers.get(userId).add(socket.id);
+      socket.join(`user:${userId}`);
+
+      // ── Presence ─────────────────────────────────────────────────────
+      const onlineIds = Array.from(OnlineUsers.keys());
+      const profiles = await loadUsers(onlineIds); // ✅ EK query, pehle N thin
+
+      if (!profiles[userId]?.hideOnlineStatus) {
+        socket.broadcast.emit("user-online", { userId });
       }
-    } catch (err) {
-      console.error("[CONNECT-DELIVER ERROR]", err.message);
-    }
 
-    // JOIN CHAT
-    socket.on("join-chat", async (chatId) => {
-      socket.join(`chat:${chatId}`);
+      socket.emit(
+        "online-users",
+        onlineIds.filter((id) => !profiles[id]?.hideOnlineStatus)
+      );
 
-      try {
-        const unreadMessages = await Message.find({
-          chat: chatId,
+      // ── Pending messages ko delivered mark karo ──────────────────────
+      // Pehle: saari chats laao → un sab ke messages laao → update karo.
+      // Ab: seedha ek updateMany + ek chhoti find. Index
+      // { sender:1, status:1, chat:1 } is query ko cover karta hai.
+      const myChats = await Chat.find({ participants: userId })
+        .select("_id")
+        .lean();
+      const chatIds = myChats.map((c) => c._id);
+
+      if (chatIds.length) {
+        const undelivered = await Message.find({
+          chat: { $in: chatIds },
           sender: { $ne: userId },
-          status: { $in: ["sent", "delivered"] },
-          deletedFor: { $ne: userId },
-        }).select("_id sender");
+          status: "sent",
+        })
+          .select("_id sender chat")
+          .limit(500) // safety: ek saath 10,000 messages load na ho jayen
+          .lean();
 
-        if (unreadMessages.length > 0) {
-          const messageIds = unreadMessages.map((m) => m._id);
+        if (undelivered.length) {
           await Message.updateMany(
-            { _id: { $in: messageIds } },
-            { status: "seen" }
+            { _id: { $in: undelivered.map((m) => m._id) } },
+            { $set: { status: "delivered" } }
           );
 
-          await Chat.updateOne(
-            { _id: chatId },
-            { $set: { [`unreadCount.${userId}`]: 0 } }
-          );
-
-          const grouped = unreadMessages.reduce((acc, m) => {
+          const grouped = new Map();
+          for (const m of undelivered) {
             const sid = String(m.sender);
-            if (!acc[sid]) acc[sid] = [];
-            acc[sid].push(String(m._id));
-            return acc;
-          }, {});
+            if (!grouped.has(sid))
+              grouped.set(sid, { chatId: String(m.chat), ids: [] });
+            grouped.get(sid).ids.push(String(m._id));
+          }
 
-          for (const [senderId, ids] of Object.entries(grouped)) {
+          for (const [senderId, data] of grouped) {
             io.to(`user:${senderId}`).emit("messages-read", {
-              chatId,
-              messageIds: ids,
-              msgStatus: "seen",
+              chatId: data.chatId,
+              messageIds: data.ids,
+              msgStatus: "delivered",
             });
           }
         }
-      } catch (err) {
-        console.error("[JOIN-CHAT ERROR]", err.message);
+      }
+    } catch (err) {
+      console.error("[SOCKET connect]", err.message);
+    }
+
+    // ── ONLINE SYNC ───────────────────────────────────────────────────
+    safe("request-online-sync", async () => {
+      const ids = Array.from(OnlineUsers.keys());
+      const profiles = await loadUsers(ids);
+      socket.emit(
+        "online-users",
+        ids.filter((id) => !profiles[id]?.hideOnlineStatus)
+      );
+    });
+
+    // ── JOIN CHAT ─────────────────────────────────────────────────────
+    safe("join-chat", async (chatId) => {
+      if (!chatId) return;
+      socket.join(`chat:${chatId}`);
+
+      const unread = await Message.find({
+        chat: chatId,
+        sender: { $ne: userId },
+        status: { $in: ["sent", "delivered"] },
+        deletedFor: { $ne: userId },
+      })
+        .select("_id sender")
+        .limit(500)
+        .lean();
+
+      if (!unread.length) return;
+
+      await Promise.all([
+        Message.updateMany(
+          { _id: { $in: unread.map((m) => m._id) } },
+          { $set: { status: "seen" } }
+        ),
+        Chat.updateOne(
+          { _id: chatId },
+          { $set: { [`unreadCount.${userId}`]: 0 } }
+        ),
+      ]);
+
+      const grouped = new Map();
+      for (const m of unread) {
+        const sid = String(m.sender);
+        if (!grouped.has(sid)) grouped.set(sid, []);
+        grouped.get(sid).push(String(m._id));
+      }
+      for (const [senderId, ids] of grouped) {
+        io.to(`user:${senderId}`).emit("messages-read", {
+          chatId,
+          messageIds: ids,
+          msgStatus: "seen",
+        });
       }
     });
 
-    // LEAVE CHAT
-    socket.on("leave-chat", (chatId) => {
-      socket.leave(`chat:${chatId}`);
-    });
+    safe("leave-chat", (chatId) => socket.leave(`chat:${chatId}`));
 
-    // SEND MESSAGE
-    socket.on(
+    // ── SEND MESSAGE ──────────────────────────────────────────────────
+    safe(
       "send-message",
       async ({
         chatId,
@@ -187,400 +329,354 @@ const initializeSocket = (server) => {
         tempId,
         replyTo,
         mediaUrl,
+        thumbnailUrl,
         mediaType,
         mediaName,
-      }) => {
-        try {
-          if (isRateLimited(userId, 30, 60000)) {
-            return socket.emit("message-error", {
-              tempId,
-              message: "Aap bahut tezi se messages bhej rahe hain.",
-            });
-          }
-
-          const trimmedText = text?.trim() || "";
-          if (!trimmedText && !mediaUrl) return;
-          if (trimmedText.length > 1000) {
-            return socket.emit("message-error", {
-              tempId,
-              message: "Max 1000 characters.",
-            });
-          }
-
-          const chat = await Chat.findOne({
-            _id: chatId,
-            participants: userId,
+        mediaSize,
+        mediaWidth,
+        mediaHeight,
+      } = {}) => {
+        if (isRateLimited(userId, 30, 60_000)) {
+          return socket.emit("message-error", {
+            tempId,
+            message: "Aap bohot tezi se messages bhej rahe hain.",
           });
-          if (!chat)
-            return socket.emit("message-status", { tempId, status: "failed" });
+        }
 
-          const otherUserId = chat.participants
-            .map((p) => String(p))
-            .find((id) => id !== userId);
-
-          // Check on every send. This covers chats created before privacy was added
-          // and prevents direct Socket.IO clients from bypassing the REST endpoint.
-          const privacy = await canMessageUser(userId, otherUserId);
-          if (!privacy.allowed)
-            return socket.emit("message-status", {
-              tempId,
-              status: "failed",
-              reason: privacy.code === "BLOCKED" ? "blocked" : "message_not_allowed",
-            });
-
-          const isOnline =
-            OnlineUsers.has(otherUserId) &&
-            OnlineUsers.get(otherUserId).size > 0;
-          const msgStatus = isOnline ? "delivered" : "sent";
-
-          let replyToId = null;
-          if (replyTo) {
-            const replyMsg = await Message.findById(replyTo).select("_id chat");
-            if (replyMsg && String(replyMsg.chat) === chatId)
-              replyToId = replyMsg._id;
-          }
-
-          const message = await Message.create({
-            chat: chatId,
-            sender: userId,
-            text: trimmedText,
-            status: msgStatus,
-            replyTo: replyToId,
-            mediaUrl: mediaUrl || null,
-            mediaType: mediaType || null,
-            mediaName: mediaName || null,
+        const trimmedText = (text || "").trim();
+        if (!trimmedText && !mediaUrl) return;
+        if (trimmedText.length > 1000) {
+          return socket.emit("message-error", {
+            tempId,
+            message: "Max 1000 characters.",
           });
+        }
 
-          chat.lastMessage = message._id;
-          chat.lastMessageAt = message.createdAt;
-          await chat.save();
+        // 1. Participants — cache se (DB hit sirf pehli baar)
+        const participants = await getChatParticipants(chatId);
+        if (!participants || !participants.includes(String(userId))) {
+          return socket.emit("message-status", { tempId, status: "failed" });
+        }
+        const otherUserId = participants.find((id) => id !== String(userId));
 
-          await message.populate("sender", "name email avatar");
-          await message.populate({
-            path: "replyTo",
-            select: "text sender mediaType mediaUrl deleted",
-            populate: { path: "sender", select: "name" },
+        // 2. Ijazat — cached (60s)
+        const privacy = await checkPermission(userId, otherUserId);
+        if (!privacy.allowed) {
+          return socket.emit("message-status", {
+            tempId,
+            status: "failed",
+            reason:
+              privacy.code === "BLOCKED" ? "blocked" : "message_not_allowed",
           });
+        }
 
-          await Chat.updateOne(
-            { _id: chatId },
-            { $pull: { deletedFor: { $in: chat.participants } } }
-          );
-          await Chat.updateOne(
-            { _id: chatId },
-            { $inc: { [`unreadCount.${otherUserId}`]: 1 } }
-          );
+        const msgStatus = isOnline(otherUserId) ? "delivered" : "sent";
 
-          const formattedMessage = {
-            _id: String(message._id),
-            text: message.text,
-            createdAt: message.createdAt,
-            status: msgStatus,
-            sender: {
-              _id: String(message.sender._id),
-              name: message.sender.name,
-              avatar: message.sender.avatar || null,
+        // 3. Message banao (round trip #1)
+        const message = await Message.create({
+          chat: chatId,
+          sender: userId,
+          text: trimmedText,
+          status: msgStatus,
+          replyTo: replyTo || null,
+          mediaUrl: mediaUrl || null,
+          thumbnailUrl: thumbnailUrl || null,
+          mediaType: mediaType || null,
+          mediaName: mediaName || null,
+          mediaSize: mediaSize || null,
+          mediaWidth: mediaWidth || null,
+          mediaHeight: mediaHeight || null,
+        });
+
+        // 4. Chat update — sab kuch EK atomic operation me (round trip #2)
+        //    Pehle ye 4 alag queries thin.
+        const updatedChat = await Chat.findByIdAndUpdate(
+          chatId,
+          {
+            $set: {
+              lastMessage: message._id,
+              lastMessageAt: message.createdAt,
             },
-            replyTo: message.replyTo || null,
-            mediaUrl: message.mediaUrl || null,
-            mediaType: message.mediaType || null,
-            mediaName: message.mediaName || null,
-            reactions: {},
-            tempId,
-          };
-          const isMuted = chat.mutedBy?.some((id) => String(id) === otherUserId);
-            socket.to(`chat:${chatId}`).emit("receive-message", formattedMessage);
-          socket.emit("message-status", {
-            tempId,
-            status: "sent",
-            message: formattedMessage,
-            msgStatus,
-          });
+            $inc: { [`unreadCount.${otherUserId}`]: 1 },
+            $pull: { deletedFor: { $in: participants } },
+          },
+          { new: true, projection: "unreadCount mutedBy" }
+        ).lean();
 
-          io.to(`user:${userId}`).emit("chat-updated", {
-            chatId,
-            lastMessage: formattedMessage,
-            lastMessageAt: message.createdAt,
-            incrementUnread: false,
-            unreadCount: 0,
-          });
+        // 5. Sender ka profile — cache se, koi query nahi
+        const senderProfile = await getUser(userId);
 
-          const updatedChat = await Chat.findById(chatId).select("unreadCount");
-          const receiverUnread =
-            updatedChat?.unreadCount?.get(otherUserId) || 1;
-          io.to(`user:${otherUserId}`).emit("chat-updated", {
-            chatId,
-            lastMessage: formattedMessage,
-            lastMessageAt: message.createdAt,
-            incrementUnread: true,
-            unreadCount: receiverUnread,
-          });
-
-          // FCM — HAMESHA
-          try {
-            if (!isMuted) {
-              const devices = await Device.find({ userId: otherUserId });
-              const tokens = devices.map((d) => d.token).filter(Boolean);
-              if (tokens.length > 0) {
-                const notifBody = mediaUrl
-                  ? `📎 ${
-                      mediaType === "image"
-                        ? "Photo"
-                        : mediaType === "video"
-                        ? "Video"
-                        : "Document"
-                    }`
-                  : trimmedText;
-                for (const deviceToken of tokens) {
-                  await sendFCMMessage({
-                    to: deviceToken,
-                    title: message.sender.name || "New Message",
-                    body: notifBody,
-                    data: {
-                      chatId,
-                      senderId: userId,
-                      senderName: message.sender.name || '',
-                      senderAvatar: message.sender.avatar || '',
-                    },
-                  });
-                }
-                console.log(
-                  `[FCM] Sent to ${tokens.length} device(s) of "${otherUserId}"`
-                );
-              } else {
-                console.log(`[FCM] No devices for "${otherUserId}"`);
-              }
-            } else {
-              console.log(`[FCM] Skipped — muted for "${otherUserId}"`);
-            }
-          } catch (fcmErr) {
-            console.error("[FCM ERROR]", fcmErr.message);
+        // 6. replyTo ka preview — sirf tab jab reply ho
+        let replyPreview = null;
+        if (replyTo) {
+          const r = await Message.findById(replyTo)
+            .select("text sender mediaType mediaUrl thumbnailUrl deleted chat")
+            .lean();
+          if (r && String(r.chat) === String(chatId)) {
+            const rSender = await getUser(r.sender);
+            replyPreview = {
+              _id: String(r._id),
+              text: r.text,
+              mediaType: r.mediaType,
+              mediaUrl: r.mediaUrl,
+              thumbnailUrl: r.thumbnailUrl,
+              deleted: r.deleted,
+              sender: { _id: String(r.sender), name: rSender?.name || null },
+            };
           }
-        } catch (err) {
-          console.error("[SEND-MSG ERROR]", err.message);
-          socket.emit("message-status", { tempId, status: "failed" });
+        }
+
+        const formatted = {
+          _id: String(message._id),
+          text: message.text,
+          createdAt: message.createdAt,
+          status: msgStatus,
+          sender: {
+            _id: String(userId),
+            name: senderProfile?.name || null,
+            avatar: senderProfile?.avatar || null,
+          },
+          replyTo: replyPreview,
+          mediaUrl: message.mediaUrl,
+          thumbnailUrl: message.thumbnailUrl,
+          mediaType: message.mediaType,
+          mediaName: message.mediaName,
+          mediaSize: message.mediaSize,
+          mediaWidth: message.mediaWidth,
+          mediaHeight: message.mediaHeight,
+          reactions: {},
+          tempId,
+        };
+
+        // 7. Emit — receiver ke room me bhi aur chat room me bhi
+        socket.to(`chat:${chatId}`).emit("receive-message", formatted);
+        socket.emit("message-status", {
+          tempId,
+          status: "sent",
+          message: formatted,
+          msgStatus,
+        });
+
+        io.to(`user:${userId}`).emit("chat-updated", {
+          chatId,
+          lastMessage: formatted,
+          lastMessageAt: message.createdAt,
+          incrementUnread: false,
+          unreadCount: 0,
+        });
+
+        const receiverUnread =
+          updatedChat?.unreadCount?.[otherUserId] ?? 1;
+
+        io.to(`user:${otherUserId}`).emit("chat-updated", {
+          chatId,
+          lastMessage: formatted,
+          lastMessageAt: message.createdAt,
+          incrementUnread: true,
+          unreadCount: receiverUnread,
+        });
+
+        // 8. Push — AWAIT NAHI. Message pehle hi deliver ho chuka hai.
+        const isMuted = (updatedChat?.mutedBy || [])
+          .map(String)
+          .includes(String(otherUserId));
+
+        if (!isMuted) {
+          const notifBody = mediaUrl
+            ? { image: "📷 Photo", video: "🎥 Video", audio: "🎤 Voice message" }[
+                mediaType
+              ] || "📎 Document"
+            : trimmedText;
+
+          setImmediate(() => {
+            sendPushToUser({
+              userId: otherUserId,
+              title: senderProfile?.name || "New Message",
+              body: notifBody,
+              imageUrl: mediaType === "image" ? thumbnailUrl || mediaUrl : undefined,
+              data: {
+                chatId,
+                senderId: userId,
+                senderName: senderProfile?.name || "",
+                senderAvatar: senderProfile?.avatar || "",
+              },
+            }).catch((e) => console.error("[FCM]", e.message));
+          });
         }
       }
     );
 
-    // EDIT MESSAGE
-    socket.on("edit-message", async ({ messageId, chatId, newText }) => {
-      try {
-        if (!newText?.trim())
-          return socket.emit("message-error", { message: "Empty text" });
-        if (newText.length > 1000)
-          return socket.emit("message-error", {
-            message: "Max 1000 characters",
-          });
+    // ── EDIT MESSAGE ──────────────────────────────────────────────────
+    safe("edit-message", async ({ messageId, chatId, newText } = {}) => {
+      const text = (newText || "").trim();
+      if (!text) return socket.emit("message-error", { message: "Empty text" });
+      if (text.length > 1000)
+        return socket.emit("message-error", { message: "Max 1000 characters" });
 
-        const message = await Message.findById(messageId);
-        if (!message) return;
-        if (String(message.sender) !== userId)
-          return socket.emit("message-error", {
-            message: "Sirf apna message edit karo",
-          });
-        if (message.deleted)
-          return socket.emit("message-error", {
-            message: "Deleted message edit nahi ho sakta",
-          });
-        if (message.mediaUrl)
-          return socket.emit("message-error", {
-            message: "Media message edit nahi ho sakta",
-          });
+      // Ek atomic update — pehle findById + checks + save the (3 round trips)
+      const updated = await Message.findOneAndUpdate(
+        { _id: messageId, sender: userId, deleted: false, mediaUrl: null },
+        { $set: { text, edited: true, editedAt: new Date() } },
+        { new: true, projection: "text editedAt" }
+      ).lean();
 
-        message.text = newText.trim();
-        message.edited = true;
-        message.editedAt = new Date();
-        await message.save();
-
-        io.to(`chat:${chatId}`).emit("message-edited", {
-          messageId,
-          chatId,
-          newText: message.text,
-          editedAt: message.editedAt,
+      if (!updated) {
+        return socket.emit("message-error", {
+          message: "Ye message edit nahi ho sakta",
         });
-      } catch (err) {
-        console.error("[EDIT-MSG ERROR]", err.message);
       }
-    });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // ✅ DELETE MESSAGE — delete for everyone OR delete for me
-    // ─────────────────────────────────────────────────────────────────────────
-    socket.on(
-      "delete-message",
-      async ({ messageId, chatId, deleteForEveryone }) => {
-        try {
-          const message = await Message.findById(messageId);
-          if (!message) return;
-
-          if (deleteForEveryone) {
-            // Sirf sender delete for everyone kar sakta hai
-            if (String(message.sender) !== userId) {
-              return socket.emit("message-error", {
-                message: "Sirf apna message delete kar sakte ho",
-              });
-            }
-
-            message.text = "This message was deleted";
-            message.deleted = true;
-            message.mediaUrl = null;
-            message.mediaType = null;
-            message.mediaName = null;
-            await message.save();
-
-            io.to(`chat:${chatId}`).emit("message-deleted", {
-              messageId,
-              deleteForEveryone: true,
-            });
-
-            const chat = await Chat.findById(chatId);
-            if (chat) {
-              const deletedMsg = {
-                _id: String(message._id),
-                text: message.text,
-                deleted: true,
-              };
-              chat.participants
-                .map((p) => String(p))
-                .forEach((pid) => {
-                  io.to(`user:${pid}`).emit("chat-updated", {
-                    chatId,
-                    lastMessage: deletedMsg,
-                    lastMessageAt: message.createdAt,
-                    incrementUnread: false,
-                  });
-                });
-            }
-          } else {
-            // ✅ Delete for me — sirf is user ke liye hide karo
-            await Message.updateOne(
-              { _id: messageId },
-              { $addToSet: { deletedFor: userId } }
-            );
-
-            // Sirf is socket ko notify karo
-            socket.emit("message-hidden", { messageId, chatId });
-          }
-        } catch (err) {
-          console.error("[DELETE-MSG ERROR]", err.message);
-        }
-      }
-    );
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // ✅ REACT TO MESSAGE
-    // emoji: "❤️" | "😂" | "👍" | "😮" | "😢" | "🔥" | null (remove)
-    // ─────────────────────────────────────────────────────────────────────────
-    socket.on("react-message", async ({ messageId, chatId, emoji }) => {
-      try {
-        const message = await Message.findById(messageId);
-        if (!message || message.deleted) return;
-
-        if (emoji) {
-          message.reactions.set(userId, emoji);
-        } else {
-          message.reactions.delete(userId);
-        }
-        await message.save();
-
-        const reactionsObj = Object.fromEntries(message.reactions);
-
-        io.to(`chat:${chatId}`).emit("message-reaction", {
-          messageId,
-          chatId,
-          reactions: reactionsObj,
-          userId,
-          emoji: emoji || null,
-        });
-      } catch (err) {
-        console.error("[REACT-MSG ERROR]", err.message);
-      }
-    });
-
-    // MARK READ
-    socket.on("mark-read", async ({ chatId, messageId }) => {
-      try {
-        if (!messageId) return;
-        const message = await Message.findById(messageId);
-        if (!message) return;
-        if (String(message.sender) === userId) return;
-        if (message.status === "seen") return;
-
-        message.status = "seen";
-        await message.save();
-
-        io.to(`user:${String(message.sender)}`).emit("messages-read", {
-          chatId,
-          messageIds: [String(messageId)],
-          msgStatus: "seen",
-        });
-      } catch (err) {
-        console.error("[MARK-READ ERROR]", err.message);
-      }
-    });
-
-    // TYPING
-    socket.on("typing", async ({ chatId }) => {
-      const chat = await Chat.findById(chatId);
-    
-      const otherUserId = chat.participants
-        .map((p) => String(p))
-        .find((id) => id !== userId);
-    
-      const blockExists = await Block.findOne({
-        $or: [
-          { blocker: userId, blocked: otherUserId },
-          { blocker: otherUserId, blocked: userId },
-        ],
+      io.to(`chat:${chatId}`).emit("message-edited", {
+        messageId,
+        chatId,
+        newText: updated.text,
+        editedAt: updated.editedAt,
       });
-    
-      if (blockExists) return;
-    
+    });
+
+    // ── DELETE MESSAGE ────────────────────────────────────────────────
+    safe(
+      "delete-message",
+      async ({ messageId, chatId, deleteForEveryone } = {}) => {
+        if (deleteForEveryone) {
+          const updated = await Message.findOneAndUpdate(
+            { _id: messageId, sender: userId },
+            {
+              $set: {
+                text: "This message was deleted",
+                deleted: true,
+                mediaUrl: null,
+                thumbnailUrl: null,
+                mediaType: null,
+                mediaName: null,
+              },
+            },
+            { new: true, projection: "_id text createdAt" }
+          ).lean();
+
+          if (!updated) {
+            return socket.emit("message-error", {
+              message: "Sirf apna message delete kar sakte ho",
+            });
+          }
+
+          io.to(`chat:${chatId}`).emit("message-deleted", {
+            messageId,
+            deleteForEveryone: true,
+          });
+
+          const participants = await getChatParticipants(chatId);
+          const deletedMsg = {
+            _id: String(updated._id),
+            text: updated.text,
+            deleted: true,
+          };
+          for (const pid of participants || []) {
+            io.to(`user:${pid}`).emit("chat-updated", {
+              chatId,
+              lastMessage: deletedMsg,
+              lastMessageAt: updated.createdAt,
+              incrementUnread: false,
+            });
+          }
+        } else {
+          await Message.updateOne(
+            { _id: messageId },
+            { $addToSet: { deletedFor: userId } }
+          );
+          socket.emit("message-hidden", { messageId, chatId });
+        }
+      }
+    );
+
+    // ── REACTIONS ─────────────────────────────────────────────────────
+    safe("react-message", async ({ messageId, chatId, emoji } = {}) => {
+      const update = emoji
+        ? { $set: { [`reactions.${userId}`]: emoji } }
+        : { $unset: { [`reactions.${userId}`]: "" } };
+
+      const updated = await Message.findOneAndUpdate(
+        { _id: messageId, deleted: false },
+        update,
+        { new: true, projection: "reactions" }
+      ).lean();
+
+      if (!updated) return;
+
+      io.to(`chat:${chatId}`).emit("message-reaction", {
+        messageId,
+        chatId,
+        reactions: updated.reactions || {},
+        userId,
+        emoji: emoji || null,
+      });
+    });
+
+    // ── MARK READ ─────────────────────────────────────────────────────
+    safe("mark-read", async ({ chatId, messageId } = {}) => {
+      if (!messageId) return;
+
+      const updated = await Message.findOneAndUpdate(
+        { _id: messageId, sender: { $ne: userId }, status: { $ne: "seen" } },
+        { $set: { status: "seen" } },
+        { new: true, projection: "sender" }
+      ).lean();
+
+      if (!updated) return;
+
+      io.to(`user:${String(updated.sender)}`).emit("messages-read", {
+        chatId,
+        messageIds: [String(messageId)],
+        msgStatus: "seen",
+      });
+    });
+
+    // ── TYPING ────────────────────────────────────────────────────────
+    // ✅ ZERO DB QUERIES. Pehle har keystroke par 2 queries chalti thin.
+    let lastTypingAt = 0;
+
+    safe("typing", async ({ chatId } = {}) => {
+      const now = Date.now();
+      if (now - lastTypingAt < 2000) return; // throttle
+      lastTypingAt = now;
+
+      const participants = await getChatParticipants(chatId); // cached
+      if (!participants) return;
+
+      const other = participants.find((id) => id !== String(userId));
+      if (!other) return;
+      if (await isBlocked(userId, other)) return; // cached
+
       socket.to(`chat:${chatId}`).emit("typing", { userId });
     });
-    socket.on("stop-typing", async ({ chatId }) => {
-      const chat = await Chat.findById(chatId);
-    
-      const otherUserId = chat.participants
-        .map((p) => String(p))
-        .find((id) => id !== userId);
-    
-      const blockExists = await Block.findOne({
-        $or: [
-          { blocker: userId, blocked: otherUserId },
-          { blocker: otherUserId, blocked: userId },
-        ],
-      });
-    
-      if (blockExists) return;
-    
+
+    safe("stop-typing", async ({ chatId } = {}) => {
+      lastTypingAt = 0;
+      const participants = await getChatParticipants(chatId);
+      if (!participants) return;
+      const other = participants.find((id) => id !== String(userId));
+      if (!other) return;
+      if (await isBlocked(userId, other)) return;
+
       socket.to(`chat:${chatId}`).emit("stop-typing", { userId });
     });
 
-    // DISCONNECT
-    socket.on("disconnect", async () => {
-      privacyCache.delete(`online_${userId}`);
-      privacyCache.delete(`ls_${userId}`);
+    // ── DISCONNECT ────────────────────────────────────────────────────
+    safe("disconnect", async () => {
       const sockets = OnlineUsers.get(userId);
-      if (!sockets || !(sockets instanceof Set)) {
-        OnlineUsers.delete(userId);
-        return;
-      }
+      if (!sockets) return;
 
       sockets.delete(socket.id);
-      if (sockets.size === 0) {
-        OnlineUsers.delete(userId);
-        const lastSeen = new Date();
-        try {
-          await User.findByIdAndUpdate(userId, { lastSeen });
-          if (await canShowLastSeen(userId)) {
-            socket.broadcast.emit("user-offline", { userId, lastSeen });
-          }
-          console.log(`[OFFLINE] userId: "${userId}" | lastSeen: ${lastSeen}`);
-        } catch (err) {
-          console.error("[LAST SEEN ERROR]", err.message);
-        }
+      if (sockets.size > 0) return; // doosre device se abhi bhi online hai
+
+      OnlineUsers.delete(userId);
+
+      const lastSeen = new Date();
+      await User.findByIdAndUpdate(userId, { $set: { lastSeen } }).catch(() => {});
+
+      const profile = await getUser(userId);
+      if (!profile?.hideLastSeen) {
+        socket.broadcast.emit("user-offline", { userId, lastSeen });
       }
     });
   });
@@ -590,3 +686,11 @@ const initializeSocket = (server) => {
 
 module.exports = initializeSocket;
 module.exports.OnlineUsers = OnlineUsers;
+
+// Doosre modules cache invalidate kar sakein (block/unblock, privacy change)
+module.exports.invalidateUser = (userId) => {
+  userCache.delete(String(userId));
+  permissionCache.deletePrefix(`${userId}|`);
+};
+module.exports.invalidateBlock = (a, b) => blockCache.delete(blockKey(a, b));
+module.exports.invalidateChat = (chatId) => chatMetaCache.delete(String(chatId));

@@ -6,6 +6,9 @@ const { authMiddleware } = require("../../middleware/auth.middleware");
 const { Follow } = require("../model/follow");
 const { DEFAULT_MESSAGE_PERMISSION } = require("../services/messagePrivacy");
 const mongoose = require("mongoose");
+// Privacy / follow badalne par socket layer ka cache saaf karna zaroori hai,
+// warna 60 second tak purani permission chalti rahegi.
+const { invalidateUser } = require("../chatSocket");
 
 function currentUserId(req) {
   return String(req.user?.id || req.user?._id || "");
@@ -30,9 +33,14 @@ async function followState(viewerId, profileId) {
 router.get("/followers", authMiddleware, async (req, res) => {
   try {
     const userId = currentUserId(req);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 200);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const followers = await Follow.find({ following: userId, status: "accepted" })
       .populate("follower", "_id name avatar bio")
-      .sort({ updatedAt: -1 });
+      .sort({ updatedAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     res.json(followers.map((item) => item.follower).filter(Boolean));
   } catch (err) {
     console.error("Fetch followers error:", err);
@@ -44,9 +52,14 @@ router.get("/followers", authMiddleware, async (req, res) => {
 router.get("/following", authMiddleware, async (req, res) => {
   try {
     const userId = currentUserId(req);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 200);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const following = await Follow.find({ follower: userId, status: "accepted" })
       .populate("following", "_id name avatar bio")
-      .sort({ updatedAt: -1 });
+      .sort({ updatedAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
     res.json(following.map((item) => item.following).filter(Boolean));
   } catch (err) {
     console.error("Fetch following error:", err);
@@ -60,7 +73,9 @@ router.get("/follow-requests", authMiddleware, async (req, res) => {
     const userId = currentUserId(req);
     const requests = await Follow.find({ following: userId, status: "pending" })
       .populate("follower", "_id name avatar bio")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean();
     res.json(requests.map((item) => ({ _id: item._id, user: item.follower })).filter((item) => item.user));
   } catch (err) {
     console.error("Fetch follow requests error:", err);
@@ -99,6 +114,8 @@ router.post("/follow/:userId", authMiddleware, async (req, res) => {
       { $setOnInsert: { status } },
       { new: true, upsert: true }
     );
+    invalidateUser(follower);
+    invalidateUser(following);
     res.status(record.status === "pending" ? 202 : 200).json({ status: record.status });
   } catch (err) {
     console.error("Follow user error:", err);
@@ -113,6 +130,8 @@ router.delete("/follow/:userId", authMiddleware, async (req, res) => {
     const following = req.params.userId;
     if (!validUserId(following)) return res.status(400).json({ error: "Invalid user id" });
     await Follow.findOneAndDelete({ follower, following });
+    invalidateUser(follower);
+    invalidateUser(following);
     res.json({ message: "Unfollowed" });
   } catch (err) {
     console.error("Unfollow user error:", err);
@@ -132,6 +151,8 @@ router.post("/follow-requests/:userId/approve", authMiddleware, async (req, res)
       { new: true }
     );
     if (!request) return res.status(404).json({ error: "Follow request not found" });
+    invalidateUser(follower);
+    invalidateUser(following);
     res.json({ status: "accepted" });
   } catch (err) {
     console.error("Approve follow request error:", err);
@@ -154,40 +175,95 @@ router.delete("/follow-requests/:userId", authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/users  — list + search
+// ─────────────────────────────────────────────────────────────────────
+// GET /api/users?search=ali&limit=30&page=1   — list + search
+//
+// ⚠️ SABSE BADA PERFORMANCE FIX YAHAN THA.
+// Pehle: `const limit = search ? 20000 : 50000;`
+// Yaani bina search ke 50,000 users memory me load hote the, phir un sab par
+// `.toObject()` chalta tha, aur saath me user ke SAARE follow records bhi.
+// Ek request server ki saari RAM kha jati thi.
+//
+// Ab:
+//  - default 30, max 100 results
+//  - relationship sirf UNHI users ke liye nikalta hai jo is page par hain
+//    (pehle poori Follow collection scan hoti thi)
+//  - prefix search `^ali` — ye `{ name: 1 }` index use karti hai.
+//    Purana `{ $regex: "ali" }` index use hi nahi kar sakta tha.
+// ─────────────────────────────────────────────────────────────────────
+const MAX_USER_PAGE = 100;
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 router.get("/", authMiddleware, async (req, res) => {
   try {
-    const { search } = req.query;
-    const query = { _id: { $ne: currentUserId(req) } };
-    if (search && search.trim()) {
-      query.name = { $regex: search.trim(), $options: "i" };
-    }
-    const limit = search ? 20000 : 50000;
-    const users = await User.find(query, "_id name avatar email privacySettings.isPrivate").limit(limit);
     const userId = currentUserId(req);
-    const connections = await Follow.find({
-      $or: [{ follower: userId }, { following: userId }],
-    }).select("follower following status");
+    const limit = Math.min(
+      parseInt(req.query.limit, 10) || 30,
+      MAX_USER_PAGE
+    );
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+
+    const query = { _id: { $ne: userId } };
+
+    const search = (req.query.search || "").trim();
+    if (search) {
+      // Prefix match — index-friendly
+      query.name = { $regex: `^${escapeRegex(search)}`, $options: "i" };
+    }
+
+    const users = await User.find(
+      query,
+      "_id name avatar email privacySettings.isPrivate"
+    )
+      .sort({ name: 1 })
+      .skip((page - 1) * limit)
+      .limit(limit + 1)
+      .lean();
+
+    const hasMore = users.length > limit;
+    const pageUsers = hasMore ? users.slice(0, limit) : users;
+    const pageIds = pageUsers.map((u) => u._id);
+
+    // Sirf is page ke users ke relationships — pehle SAB aate the
+    const connections = pageIds.length
+      ? await Follow.find({
+          $or: [
+            { follower: userId, following: { $in: pageIds } },
+            { follower: { $in: pageIds }, following: userId },
+          ],
+        })
+          .select("follower following status")
+          .lean()
+      : [];
+
     const relationshipByUser = new Map();
-    connections.forEach((connection) => {
-      const otherId = String(connection.follower) === userId
-        ? String(connection.following)
-        : String(connection.follower);
-      const previous = relationshipByUser.get(otherId) || {
+    for (const c of connections) {
+      const otherId =
+        String(c.follower) === userId ? String(c.following) : String(c.follower);
+      const prev = relationshipByUser.get(otherId) || {
         followingStatus: "none",
         followedByStatus: "none",
       };
-      if (String(connection.follower) === userId) previous.followingStatus = connection.status;
-      else previous.followedByStatus = connection.status;
-      relationshipByUser.set(otherId, previous);
+      if (String(c.follower) === userId) prev.followingStatus = c.status;
+      else prev.followedByStatus = c.status;
+      relationshipByUser.set(otherId, prev);
+    }
+
+    res.json({
+      users: pageUsers.map((user) => ({
+        ...user,
+        relationship: relationshipByUser.get(String(user._id)) || {
+          followingStatus: "none",
+          followedByStatus: "none",
+        },
+      })),
+      page,
+      limit,
+      hasMore,
     });
-    res.json(users.map((user) => ({
-      ...user.toObject(),
-      relationship: relationshipByUser.get(String(user._id)) || {
-        followingStatus: "none",
-        followedByStatus: "none",
-      },
-    })));
   } catch (err) {
     console.error("Fetch users error:", err);
     res.status(500).json({ error: "Failed to fetch users" });
@@ -234,6 +310,7 @@ router.put("/privacy", authMiddleware, async (req, res) => {
     const user = await User.findByIdAndUpdate(userId, { $set: update }, { new: true })
       .select("privacySettings");
     if (!user) return res.status(404).json({ error: "User not found. Please sign in again." });
+    invalidateUser(userId); // socket cache refresh
     res.json({
       message: "Updated",
       hideLastSeen: user.privacySettings.hideLastSeen,

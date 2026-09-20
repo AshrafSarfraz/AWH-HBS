@@ -12,7 +12,9 @@ const DeviceSchema = new mongoose.Schema(
     token: {
       type: String,
       required: true,
-      unique: true,
+      // ⚠️ FIX: yahan `unique: true` bhi tha aur neeche schema.index() bhi —
+      // Mongoose "Duplicate schema index" warning deta tha aur do index
+      // banane ki koshish hoti thi. Ab sirf neeche wala index hai.
     },
     platform: {
       type: String,

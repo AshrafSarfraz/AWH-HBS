@@ -90,4 +90,13 @@ const BrandSchema = new mongoose.Schema(
   }
 );
 
-module.exports = HBS_DB.model("Brand", BrandSchema);
+// ─────────────────────────────────────────────────────────────────────
+// NEW INDEXES — brand list in filters par chalti hai, pehle koi index nahi tha
+// ─────────────────────────────────────────────────────────────────────
+BrandSchema.index({ status: 1, time: -1 });
+BrandSchema.index({ selectedCity: 1, status: 1 });
+BrandSchema.index({ selectedCategory: 1, status: 1 });
+BrandSchema.index({ pin: 1 }); // vendor login by pin
+BrandSchema.index({ selectedVenue: 1 });
+
+module.exports = HBS_DB.models.Brand || HBS_DB.model("Brand", BrandSchema);

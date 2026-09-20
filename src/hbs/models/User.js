@@ -1,31 +1,44 @@
+// src/hbs/models/User.js
+//
+// KYA BADLA:
+//  - `name` par index (user search ke liye) — pehle har search full scan thi.
+//  - OTP ab plain text me store nahi hoga: `otpHash` + `otpAttempts`.
+//    (phoneAuth.js isay use karta hai — dono files saath change karni hain.)
+//  - email lowercase + trim automatic.
+
 const mongoose = require("mongoose");
 const { HBS_DB } = require("../../database/connect");
 
 const UserSchema = new mongoose.Schema(
   {
-    name:            { type: String, required: true },
-    email:           { type: String, required: true, unique: true },
-    phone:           { type: String, required: true, unique: true },
+    name: { type: String, required: true, trim: true },
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+    phone: { type: String, required: true, unique: true, trim: true },
     isPhoneVerified: { type: Boolean, default: false },
- 
-    // ── Profile fields ──────────────────────────────────────────────────
-    avatar:   { type: String, default: null },  // profile picture URL
-    bio:      { type: String, default: null, maxlength: 150 },
-    birthday: { type: Date,   default: null },
- 
-    // ── OTP ─────────────────────────────────────────────────────────────
-    lastOtpSentAt: { type: Date,   default: null },
-    otpCode:       { type: String, default: null },
-    otpExpiresAt:  { type: Date,   default: null },
- 
-    // ── Presence ─────────────────────────────────────────────────────────
+
+    // ── Profile ────────────────────────────────────────────────────────
+    avatar: { type: String, default: null },
+    bio: { type: String, default: null, maxlength: 150 },
+    birthday: { type: Date, default: null },
+
+    // ── OTP (hashed) ───────────────────────────────────────────────────
+    lastOtpSentAt: { type: Date, default: null },
+    otpHash: { type: String, default: null, select: false }, // NEW
+    otpExpiresAt: { type: Date, default: null },
+    otpAttempts: { type: Number, default: 0 }, // NEW — brute force rokne ke liye
+
+    // ── Presence ───────────────────────────────────────────────────────
     lastSeen: { type: Date, default: null },
     privacySettings: {
-      hideOnlineStatus: { type: Boolean, default: false }, // true = koi nahi dekhega online
-      hideLastSeen:     { type: Boolean, default: false }, // true = last seen hidden
-      // Private accounts must approve follow requests before someone becomes a follower.
+      hideOnlineStatus: { type: Boolean, default: false },
+      hideLastSeen: { type: Boolean, default: false },
       isPrivate: { type: Boolean, default: false },
-      // Controls who may start or continue sending this user direct messages.
       messagePermission: {
         type: String,
         enum: ["everyone", "followers", "following", "mutual", "nobody"],
@@ -33,10 +46,12 @@ const UserSchema = new mongoose.Schema(
       },
     },
   },
-  {
-    collection: "Users",
-    timestamps: true,
-  }
+  { collection: "Users", timestamps: true }
 );
- 
-module.exports = HBS_DB.model("User", UserSchema);
+
+// User search — prefix search ab index use karegi
+UserSchema.index({ name: 1 });
+// Naam se full-text search chahiye to yeh bhi (optional):
+// UserSchema.index({ name: "text" });
+
+module.exports = HBS_DB.models.User || HBS_DB.model("User", UserSchema);

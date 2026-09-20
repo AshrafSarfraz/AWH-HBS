@@ -28,4 +28,14 @@ const RedeemSchema = new mongoose.Schema(
 // ✅ one redeem per (userId, brandId, date)
 RedeemSchema.index({ userId: 1, brandId: 1, date: 1 }, { unique: true });
 
+// ─────────────────────────────────────────────────────────────────────
+// NEW INDEXES
+// Upar wala compound index sirf tab kaam karta hai jab query `userId` se
+// shuru ho. Lekin vendor panel sirf brandId se query karta hai
+// (POST /api/hbs/vender/redemption) — wo full collection scan tha.
+// ─────────────────────────────────────────────────────────────────────
+RedeemSchema.index({ brandId: 1, date: -1 });
+RedeemSchema.index({ userId: 1, date: -1 });
+RedeemSchema.index({ createdAt: -1 });
+
 module.exports = HBS_DB.model("Redeem", RedeemSchema);
