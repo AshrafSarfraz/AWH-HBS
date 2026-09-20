@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 const { HBS_DB } = require("../../database/connect");
- 
+
 const UserSchema = new mongoose.Schema(
   {
     name:            { type: String, required: true },
@@ -23,6 +23,14 @@ const UserSchema = new mongoose.Schema(
     privacySettings: {
       hideOnlineStatus: { type: Boolean, default: false }, // true = koi nahi dekhega online
       hideLastSeen:     { type: Boolean, default: false }, // true = last seen hidden
+      // Private accounts must approve follow requests before someone becomes a follower.
+      isPrivate: { type: Boolean, default: false },
+      // Controls who may start or continue sending this user direct messages.
+      messagePermission: {
+        type: String,
+        enum: ["everyone", "followers", "following", "mutual", "nobody"],
+        default: "followers",
+      },
     },
   },
   {
@@ -32,4 +40,3 @@ const UserSchema = new mongoose.Schema(
 );
  
 module.exports = HBS_DB.model("User", UserSchema);
- 

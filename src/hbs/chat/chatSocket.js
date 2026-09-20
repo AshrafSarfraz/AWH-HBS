@@ -7,6 +7,7 @@ const jwt = require("jsonwebtoken");
 const sendFCMMessage = require("./sendFCMMessage");
 const Device = require("./model/device");
 const { Block } = require("./model/block");
+const { canMessageUser } = require("./services/messagePrivacy");
 const { isRateLimited } = require("../utils/socketratelimiter");
 const privacyCache = new Map();
 const CACHE_TTL = 60 * 1000; // 1 minute
@@ -217,17 +218,14 @@ const initializeSocket = (server) => {
             .map((p) => String(p))
             .find((id) => id !== userId);
 
-          const blockExists = await Block.findOne({
-            $or: [
-              { blocker: userId, blocked: otherUserId },
-              { blocker: otherUserId, blocked: userId },
-            ],
-          });
-          if (blockExists)
+          // Check on every send. This covers chats created before privacy was added
+          // and prevents direct Socket.IO clients from bypassing the REST endpoint.
+          const privacy = await canMessageUser(userId, otherUserId);
+          if (!privacy.allowed)
             return socket.emit("message-status", {
               tempId,
               status: "failed",
-              reason: "blocked",
+              reason: privacy.code === "BLOCKED" ? "blocked" : "message_not_allowed",
             });
 
           const isOnline =

@@ -226,6 +226,7 @@ const mongoose = require("mongoose");
 const { Chat } = require("../model/chat");
 require("../../models/User");
 const { Message } = require("../model/message");
+const { canMessageUser } = require("../services/messagePrivacy");
 
 const { Types } = mongoose;
 
@@ -285,6 +286,23 @@ async function getOrCreateChat(req, res) {
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     if (!participantId)
       return res.status(400).json({ error: "participantId required" });
+    if (!mongoose.isValidObjectId(participantId)) {
+      return res.status(400).json({ error: "Invalid participantId" });
+    }
+    if (String(userId) === String(participantId)) {
+      return res.status(400).json({ error: "You cannot create a chat with yourself" });
+    }
+
+    // This applies both when starting a new chat and reopening an existing one.
+    // Sending is checked again in Socket.IO to prevent a client-side bypass.
+    const privacy = await canMessageUser(userId, participantId);
+    if (!privacy.allowed) {
+      const status = privacy.code === "USER_NOT_FOUND" ? 404 : 403;
+      return res.status(status).json({
+        error: privacy.code === "BLOCKED" ? "You cannot message this user" : "This user does not allow messages from you",
+        code: privacy.code,
+      });
+    }
 
     const userObjId = new mongoose.Types.ObjectId(userId);
     const participantObjId = new mongoose.Types.ObjectId(participantId);
@@ -423,7 +441,6 @@ module.exports = {
   muteChat,
   unmuteChat,
 };
-
 
 
 

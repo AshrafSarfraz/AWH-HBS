@@ -2,8 +2,13 @@
 const express = require("express");
 const app = express();
 const cors = require("cors");
-require("dotenv").config();
 const path = require("path");
+require("dotenv").config({
+  path: path.join(__dirname, ".env"),
+  // Local shells can have stale Mongo variables exported. In development, the
+  // project .env must be authoritative so HBS_DB does not fall back to `test`.
+  override: process.env.NODE_ENV !== "production",
+});
 
 
 // ----------------- IMPORT ROUTES -----------------
@@ -150,7 +155,7 @@ server.listen(PORT, '0.0.0.0', async () => {
     useUnifiedTopology: true,
   });
 
-  console.log("MongoDB connected");
+  console.log(`MongoDB connected (${mongoose.connection.name})`);
 
   // 🔥 ALWAYS fresh data on restart
   await syncEmployees();
