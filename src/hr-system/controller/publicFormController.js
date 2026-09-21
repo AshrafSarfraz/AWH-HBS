@@ -264,7 +264,7 @@ async function submitForm(req, res) {
                 <tr>
                   <td style="padding:12px 20px 16px 20px;font-family:Arial,Helvetica,sans-serif;border-top:1px solid #e5e7eb;">
                     <p style="margin:0;font-size:11px;line-height:1.5;color:#9ca3af;text-align:center;">
-                      This is an automated email from the Al Wessil HR workflow system.<br/>
+                      This is an automated email from the Bnyan HR workflow system.<br/>
                       Please do not reply directly to this email.
                     </p>
                   </td>
