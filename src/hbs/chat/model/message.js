@@ -16,6 +16,8 @@ const MessageSchema = new Schema(
     chat: { type: Schema.Types.ObjectId, ref: "Chat", required: true },
     sender: { type: Schema.Types.ObjectId, ref: "User", required: true },
 
+    tempId: { type: String, maxlength: 160 },
+
     text: { type: String, trim: true, default: "", maxlength: 4000 },
 
     replyTo: { type: Schema.Types.ObjectId, ref: "Message", default: null },
@@ -55,7 +57,9 @@ const MessageSchema = new Schema(
 // ─────────────────────────────────────────────────────────────────────
 
 // Chat kholte hi messages latest-first aate hain. Sabse zaroori index.
-MessageSchema.index({ chat: 1, createdAt: -1 });
+MessageSchema.index({ chat: 1, createdAt: -1, _id: -1 });
+// Existing messages have no tempId, so the partial index is safe for legacy data.
+MessageSchema.index({chat: 1, sender: 1, tempId: 1}, {unique: true, partialFilterExpression: {tempId: {$type: "string"}}});
 
 // "Is chat me mere liye unread kya hai" — join-chat aur bulkMarkRead
 MessageSchema.index({ chat: 1, sender: 1, status: 1 });

@@ -10,6 +10,7 @@
 //    karta hai (pehle koi bhi logged-in user kuch bhi upload kar sakta tha).
 
 const mongoose = require("mongoose");
+const {pageLimit, encodeCursor, cursorFilter} = require("../pagination");
 const { Chat } = require("../model/chat");
 const { Message } = require("../model/message");
 const { uploadMediaBuffer } = require("../../utils/mediaUpload");
@@ -44,10 +45,7 @@ async function getMessages(req, res, next) {
     if (!chat)
       return res.status(404).json({ error: "Chat not found or access denied" });
 
-    const limit = Math.min(
-      parseInt(req.query.limit, 10) || DEFAULT_PAGE_SIZE,
-      MAX_PAGE_SIZE
-    );
+    const limit = pageLimit(req.query.limit, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
 
     const query = { chat: chatId, deletedFor: { $ne: userId } };
 
@@ -57,11 +55,11 @@ async function getMessages(req, res, next) {
       usingCursor = true;
       const before = req.query.before;
       if (mongoose.isValidObjectId(before)) {
-        const anchor = await Message.findById(before).select("createdAt").lean();
-        if (anchor) query.createdAt = { $lt: anchor.createdAt };
+        const anchor = await Message.findOne({_id: before, chat: chatId, deletedFor: {$ne: userId}}).select("createdAt").lean();
+        if (!anchor) return res.status(400).json({error: "Invalid pagination cursor"});
+        Object.assign(query, cursorFilter(encodeCursor(anchor)));
       } else {
-        const d = new Date(before);
-        if (!Number.isNaN(d.getTime())) query.createdAt = { $lt: d };
+        Object.assign(query, cursorFilter(before));
       }
     }
 
@@ -75,7 +73,7 @@ async function getMessages(req, res, next) {
         select: "text sender mediaUrl thumbnailUrl mediaType mediaName deleted",
         populate: { path: "sender", select: "name" },
       })
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, _id: -1 })
       .skip(skip)
       .limit(limit + 1) // ek extra taake hasMore pata chale bina count ke
       .lean();
@@ -99,7 +97,7 @@ async function getMessages(req, res, next) {
         totalPages: total == null ? null : Math.ceil(total / limit),
         hasMore,
         // agli request me isay `before` ke taur par bhejein
-        nextCursor: messages.length ? messages[0].createdAt : null,
+        nextCursor: encodeCursor(messages[0]),
       },
     });
   } catch (err) {
@@ -202,7 +200,7 @@ async function getChatMedia(req, res, next) {
     if (!chat)
       return res.status(404).json({ error: "Chat not found or access denied" });
 
-    const limit = Math.min(parseInt(req.query.limit, 10) || 30, MAX_PAGE_SIZE);
+    const limit = pageLimit(req.query.limit, 30, MAX_PAGE_SIZE);
 
     const filter = {
       chat: chatId,
@@ -214,14 +212,13 @@ async function getChatMedia(req, res, next) {
       filter.mediaType = type;
     }
     if (req.query.before) {
-      const d = new Date(req.query.before);
-      if (!Number.isNaN(d.getTime())) filter.createdAt = { $lt: d };
+      Object.assign(filter, cursorFilter(req.query.before));
     }
 
     const rows = await Message.find(filter)
       .select("mediaUrl thumbnailUrl mediaType mediaName mediaSize createdAt sender")
       .populate("sender", "name avatar")
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: -1, _id: -1 })
       .limit(limit + 1)
       .lean();
 
@@ -231,7 +228,7 @@ async function getChatMedia(req, res, next) {
     res.json({
       media,
       hasMore,
-      nextCursor: media.length ? media[media.length - 1].createdAt : null,
+      nextCursor: encodeCursor(media[media.length - 1]),
     });
   } catch (err) {
     next(err);

@@ -1,0 +1,10 @@
+Original backend files checked: 116
+Unchanged original files: 110
+Files outside src/hbs/: 49; all byte-for-byte unchanged.
+Changed original files:
+src/hbs/chat/chatSocket.js
+src/hbs/chat/controllers/chatController.js
+src/hbs/chat/controllers/messageController.js
+src/hbs/chat/model/chat.js
+src/hbs/chat/model/message.js
+src/hbs/chat/routes/userRoutes.js

@@ -33,6 +33,7 @@
 //    tha). Ab same allow-list dono jagah.
 
 const { Server } = require("socket.io");
+const { saveMessage } = require("./saveMessage");
 const jwt = require("jsonwebtoken");
 
 const { Chat } = require("./model/chat");
@@ -198,72 +199,9 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
           await fn(...args);
         } catch (err) {
           console.error(`[SOCKET ${name}]`, err.message);
+          if (name === "send-message") socket.emit("message-status", {tempId: args[0]?.tempId, status: "failed"});
         }
       });
-
-    try {
-      if (!OnlineUsers.has(userId)) OnlineUsers.set(userId, new Set());
-      OnlineUsers.get(userId).add(socket.id);
-      socket.join(`user:${userId}`);
-
-      // ── Presence ─────────────────────────────────────────────────────
-      const onlineIds = Array.from(OnlineUsers.keys());
-      const profiles = await loadUsers(onlineIds); // ✅ EK query, pehle N thin
-
-      if (!profiles[userId]?.hideOnlineStatus) {
-        socket.broadcast.emit("user-online", { userId });
-      }
-
-      socket.emit(
-        "online-users",
-        onlineIds.filter((id) => !profiles[id]?.hideOnlineStatus)
-      );
-
-      // ── Pending messages ko delivered mark karo ──────────────────────
-      // Pehle: saari chats laao → un sab ke messages laao → update karo.
-      // Ab: seedha ek updateMany + ek chhoti find. Index
-      // { sender:1, status:1, chat:1 } is query ko cover karta hai.
-      const myChats = await Chat.find({ participants: userId })
-        .select("_id")
-        .lean();
-      const chatIds = myChats.map((c) => c._id);
-
-      if (chatIds.length) {
-        const undelivered = await Message.find({
-          chat: { $in: chatIds },
-          sender: { $ne: userId },
-          status: "sent",
-        })
-          .select("_id sender chat")
-          .limit(500) // safety: ek saath 10,000 messages load na ho jayen
-          .lean();
-
-        if (undelivered.length) {
-          await Message.updateMany(
-            { _id: { $in: undelivered.map((m) => m._id) } },
-            { $set: { status: "delivered" } }
-          );
-
-          const grouped = new Map();
-          for (const m of undelivered) {
-            const sid = String(m.sender);
-            if (!grouped.has(sid))
-              grouped.set(sid, { chatId: String(m.chat), ids: [] });
-            grouped.get(sid).ids.push(String(m._id));
-          }
-
-          for (const [senderId, data] of grouped) {
-            io.to(`user:${senderId}`).emit("messages-read", {
-              chatId: data.chatId,
-              messageIds: data.ids,
-              msgStatus: "delivered",
-            });
-          }
-        }
-      }
-    } catch (err) {
-      console.error("[SOCKET connect]", err.message);
-    }
 
     // ── ONLINE SYNC ───────────────────────────────────────────────────
     safe("request-online-sync", async () => {
@@ -278,7 +216,9 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
     // ── JOIN CHAT ─────────────────────────────────────────────────────
     safe("join-chat", async (chatId) => {
       if (!chatId) return;
-      socket.join(`chat:${chatId}`);
+      const participants = await getChatParticipants(chatId);
+      if (!participants?.includes(String(userId))) return;
+      await socket.join(`chat:${chatId}`);
 
       const unread = await Message.find({
         chat: chatId,
@@ -290,11 +230,14 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
         .limit(500)
         .lean();
 
-      if (!unread.length) return;
+      if (!unread.length) {
+        await Chat.updateOne({_id: chatId}, {$set: {[`unreadCount.${userId}`]: 0}});
+        return;
+      }
 
       await Promise.all([
         Message.updateMany(
-          { _id: { $in: unread.map((m) => m._id) } },
+          {chat: chatId, sender: {$ne: userId}, deletedFor: {$ne: userId}, status: {$in: ["sent", "delivered"]}},
           { $set: { status: "seen" } }
         ),
         Chat.updateOne(
@@ -310,6 +253,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
         grouped.get(sid).push(String(m._id));
       }
       for (const [senderId, ids] of grouped) {
+        io.to(`user:${senderId}`).emit("chat-read", {chatId});
         io.to(`user:${senderId}`).emit("messages-read", {
           chatId,
           messageIds: ids,
@@ -343,7 +287,10 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
           });
         }
 
-        const trimmedText = (text || "").trim();
+        if (tempId != null && (typeof tempId !== "string" || !tempId.length || tempId.length > 160)) {
+          return socket.emit("message-error", {tempId, message: "Invalid message identifier"});
+        }
+        const trimmedText = typeof text === "string" ? text.trim() : "";
         if (!trimmedText && !mediaUrl) return;
         if (trimmedText.length > 1000) {
           return socket.emit("message-error", {
@@ -373,7 +320,8 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
         const msgStatus = isOnline(otherUserId) ? "delivered" : "sent";
 
         // 3. Message banao (round trip #1)
-        const message = await Message.create({
+        const {message, created} = await saveMessage(Message, {
+          ...(tempId ? {tempId} : {}),
           chat: chatId,
           sender: userId,
           text: trimmedText,
@@ -387,6 +335,14 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
           mediaWidth: mediaWidth || null,
           mediaHeight: mediaHeight || null,
         });
+
+        if (!created) {
+          const stored = await Message.findById(message._id)
+            .populate("sender", "name avatar")
+            .populate({path: "replyTo", select: "text sender mediaType mediaUrl thumbnailUrl deleted", populate: {path: "sender", select: "name"}})
+            .lean();
+          return socket.emit("message-status", {tempId, status: "sent", message: {...stored, chatId, tempId}, msgStatus: message.status});
+        }
 
         // 4. Chat update — sab kuch EK atomic operation me (round trip #2)
         //    Pehle ye 4 alag queries thin.
@@ -427,6 +383,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
         }
 
         const formatted = {
+          chatId,
           _id: String(message._id),
           text: message.text,
           createdAt: message.createdAt,
@@ -508,6 +465,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
 
     // ── EDIT MESSAGE ──────────────────────────────────────────────────
     safe("edit-message", async ({ messageId, chatId, newText } = {}) => {
+      if (!(await getChatParticipants(chatId))?.includes(String(userId))) return;
       const text = (newText || "").trim();
       if (!text) return socket.emit("message-error", { message: "Empty text" });
       if (text.length > 1000)
@@ -515,7 +473,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
 
       // Ek atomic update — pehle findById + checks + save the (3 round trips)
       const updated = await Message.findOneAndUpdate(
-        { _id: messageId, sender: userId, deleted: false, mediaUrl: null },
+        { _id: messageId, chat: chatId, sender: userId, deleted: false, mediaUrl: null },
         { $set: { text, edited: true, editedAt: new Date() } },
         { new: true, projection: "text editedAt" }
       ).lean();
@@ -538,9 +496,10 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
     safe(
       "delete-message",
       async ({ messageId, chatId, deleteForEveryone } = {}) => {
+        if (!(await getChatParticipants(chatId))?.includes(String(userId))) return;
         if (deleteForEveryone) {
           const updated = await Message.findOneAndUpdate(
-            { _id: messageId, sender: userId },
+            { _id: messageId, chat: chatId, sender: userId },
             {
               $set: {
                 text: "This message was deleted",
@@ -565,6 +524,8 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
             deleteForEveryone: true,
           });
 
+          const latest = await Chat.findById(chatId).select("lastMessage").lean();
+          if (String(latest?.lastMessage) !== String(messageId)) return;
           const participants = await getChatParticipants(chatId);
           const deletedMsg = {
             _id: String(updated._id),
@@ -581,7 +542,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
           }
         } else {
           await Message.updateOne(
-            { _id: messageId },
+            { _id: messageId, chat: chatId },
             { $addToSet: { deletedFor: userId } }
           );
           socket.emit("message-hidden", { messageId, chatId });
@@ -591,12 +552,14 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
 
     // ── REACTIONS ─────────────────────────────────────────────────────
     safe("react-message", async ({ messageId, chatId, emoji } = {}) => {
+      if (!(await getChatParticipants(chatId))?.includes(String(userId))) return;
+      if (emoji != null && (typeof emoji !== "string" || emoji.length > 32)) return;
       const update = emoji
         ? { $set: { [`reactions.${userId}`]: emoji } }
         : { $unset: { [`reactions.${userId}`]: "" } };
 
       const updated = await Message.findOneAndUpdate(
-        { _id: messageId, deleted: false },
+        { _id: messageId, chat: chatId, deleted: false },
         update,
         { new: true, projection: "reactions" }
       ).lean();
@@ -614,16 +577,17 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
 
     // ── MARK READ ─────────────────────────────────────────────────────
     safe("mark-read", async ({ chatId, messageId } = {}) => {
-      if (!messageId) return;
+      if (!messageId || !(await getChatParticipants(chatId))?.includes(String(userId))) return;
 
       const updated = await Message.findOneAndUpdate(
-        { _id: messageId, sender: { $ne: userId }, status: { $ne: "seen" } },
+        { _id: messageId, chat: chatId, deletedFor: {$ne: userId}, sender: { $ne: userId }, status: { $ne: "seen" } },
         { $set: { status: "seen" } },
         { new: true, projection: "sender" }
       ).lean();
 
       if (!updated) return;
 
+      await Chat.updateOne({_id: chatId, [`unreadCount.${userId}`]: {$gt: 0}}, {$inc: {[`unreadCount.${userId}`]: -1}});
       io.to(`user:${String(updated.sender)}`).emit("messages-read", {
         chatId,
         messageIds: [String(messageId)],
@@ -641,7 +605,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
       lastTypingAt = now;
 
       const participants = await getChatParticipants(chatId); // cached
-      if (!participants) return;
+      if (!participants?.includes(String(userId))) return;
 
       const other = participants.find((id) => id !== String(userId));
       if (!other) return;
@@ -653,7 +617,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
     safe("stop-typing", async ({ chatId } = {}) => {
       lastTypingAt = 0;
       const participants = await getChatParticipants(chatId);
-      if (!participants) return;
+      if (!participants?.includes(String(userId))) return;
       const other = participants.find((id) => id !== String(userId));
       if (!other) return;
       if (await isBlocked(userId, other)) return;
@@ -679,6 +643,71 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
         socket.broadcast.emit("user-offline", { userId, lastSeen });
       }
     });
+    // Register listeners before the first database await so initial joins are not lost.
+    try {
+      if (!OnlineUsers.has(userId)) OnlineUsers.set(userId, new Set());
+      OnlineUsers.get(userId).add(socket.id);
+      socket.join(`user:${userId}`);
+
+      // ── Presence ─────────────────────────────────────────────────────
+      const onlineIds = Array.from(OnlineUsers.keys());
+      const profiles = await loadUsers(onlineIds); // ✅ EK query, pehle N thin
+
+      if (!profiles[userId]?.hideOnlineStatus) {
+        socket.broadcast.emit("user-online", { userId });
+      }
+
+      socket.emit(
+        "online-users",
+        onlineIds.filter((id) => !profiles[id]?.hideOnlineStatus)
+      );
+
+      // ── Pending messages ko delivered mark karo ──────────────────────
+      // Pehle: saari chats laao → un sab ke messages laao → update karo.
+      // Ab: seedha ek updateMany + ek chhoti find. Index
+      // { sender:1, status:1, chat:1 } is query ko cover karta hai.
+      const myChats = await Chat.find({ participants: userId })
+        .select("_id")
+        .lean();
+      const chatIds = myChats.map((c) => c._id);
+
+      if (chatIds.length) {
+        const undelivered = await Message.find({
+          chat: { $in: chatIds },
+          sender: { $ne: userId },
+          status: "sent",
+        })
+          .select("_id sender chat")
+          .limit(500) // safety: ek saath 10,000 messages load na ho jayen
+          .lean();
+
+        if (undelivered.length) {
+          await Message.updateMany(
+            { _id: { $in: undelivered.map((m) => m._id) }, status: "sent" },
+            { $set: { status: "delivered" } }
+          );
+
+          const grouped = new Map();
+          for (const m of undelivered) {
+            const key = `${m.sender}:${m.chat}`;
+            if (!grouped.has(key)) grouped.set(key, {senderId: String(m.sender), chatId: String(m.chat), ids: []});
+            grouped.get(key).ids.push(String(m._id));
+          }
+
+          for (const data of grouped.values()) {
+            const senderId = data.senderId;
+            io.to(`user:${senderId}`).emit("messages-read", {
+              chatId: data.chatId,
+              messageIds: data.ids,
+              msgStatus: "delivered",
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[SOCKET connect]", err.message);
+    }
+
   });
 
   return io;

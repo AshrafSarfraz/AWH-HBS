@@ -31,7 +31,7 @@ ChatSchema.path("participants").validate(
 );
 
 // Chat list: find({ participants: me }).sort({ lastMessageAt: -1 })
-ChatSchema.index({ participants: 1, lastMessageAt: -1 });
+ChatSchema.index({ participants: 1, lastMessageAt: -1, _id: -1 });
 
 const Chat = HBS_DB.models.Chat || HBS_DB.model("Chat", ChatSchema);
 

@@ -1,0 +1,19 @@
+✔ cursor retains timestamp and ID tie-breaker; accepts legacy dates and rejects bad input (2.341154ms)
+✔ retry returns saved message without another insert (0.18544ms)
+✔ concurrent duplicate-key retry resolves to original row (0.269898ms)
+✔ message page returns oldest first with stable next cursor and boundary filter (156.428572ms)
+✔ nonparticipant cannot fetch messages or media (1.115624ms)
+✔ media endpoint honors composite before and hasMore (0.927841ms)
+✔ social pagination is opt-in, includes totals and retains legacy arrays (45.86486ms)
+✔ outsider cannot join, read, edit, delete, react or type in a chat (4.503848ms)
+✔ authorized message mutations constrain message ID to the supplied chat (1.625533ms)
+✔ connect receipts are grouped by both sender and conversation (1.286141ms)
+✔ socket retry acknowledges saved message without rebroadcast or another insert (1.339141ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 335.671035

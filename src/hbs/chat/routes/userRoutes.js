@@ -33,15 +33,20 @@ async function followState(viewerId, profileId) {
 router.get("/followers", authMiddleware, async (req, res) => {
   try {
     const userId = currentUserId(req);
-    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 200);
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const followers = await Follow.find({ following: userId, status: "accepted" })
       .populate("follower", "_id name avatar bio")
-      .sort({ updatedAt: -1 })
+      .sort({ updatedAt: -1, _id: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
-    res.json(followers.map((item) => item.follower).filter(Boolean));
+    const items = followers.map((item) => item.follower).filter(Boolean);
+    if (req.query.pagination === "true") {
+      const total = await Follow.countDocuments({ following: userId, status: "accepted" });
+      return res.json({followers: items, page, limit, total, hasMore: page * limit < total});
+    }
+    res.json(items);
   } catch (err) {
     console.error("Fetch followers error:", err);
     res.status(500).json({ error: "Failed to fetch followers" });
@@ -52,15 +57,20 @@ router.get("/followers", authMiddleware, async (req, res) => {
 router.get("/following", authMiddleware, async (req, res) => {
   try {
     const userId = currentUserId(req);
-    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 200);
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const following = await Follow.find({ follower: userId, status: "accepted" })
       .populate("following", "_id name avatar bio")
-      .sort({ updatedAt: -1 })
+      .sort({ updatedAt: -1, _id: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
-    res.json(following.map((item) => item.following).filter(Boolean));
+    const items = following.map((item) => item.following).filter(Boolean);
+    if (req.query.pagination === "true") {
+      const total = await Follow.countDocuments({ follower: userId, status: "accepted" });
+      return res.json({following: items, page, limit, total, hasMore: page * limit < total});
+    }
+    res.json(items);
   } catch (err) {
     console.error("Fetch following error:", err);
     res.status(500).json({ error: "Failed to fetch following" });
@@ -71,12 +81,20 @@ router.get("/following", authMiddleware, async (req, res) => {
 router.get("/follow-requests", authMiddleware, async (req, res) => {
   try {
     const userId = currentUserId(req);
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 200, 200));
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const requests = await Follow.find({ following: userId, status: "pending" })
       .populate("follower", "_id name avatar bio")
-      .sort({ createdAt: -1 })
-      .limit(200)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
       .lean();
-    res.json(requests.map((item) => ({ _id: item._id, user: item.follower })).filter((item) => item.user));
+    const items = requests.map((item) => ({ _id: item._id, user: item.follower })).filter((item) => item.user);
+    if (req.query.pagination === "true") {
+      const total = await Follow.countDocuments({following: userId, status: "pending"});
+      return res.json({requests: items, page, limit, total, hasMore: page * limit < total});
+    }
+    res.json(items);
   } catch (err) {
     console.error("Fetch follow requests error:", err);
     res.status(500).json({ error: "Failed to fetch follow requests" });

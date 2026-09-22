@@ -9,6 +9,7 @@
 //    jawab de.
 
 const mongoose = require("mongoose");
+const {pageLimit, encodeCursor, cursorFilter} = require("../pagination");
 const { Chat } = require("../model/chat");
 const { Message } = require("../model/message");
 const { canMessageUser } = require("../services/messagePrivacy");
@@ -30,7 +31,7 @@ async function getChats(req, res, next) {
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
     const userObjId = new Types.ObjectId(userId);
-    const limit = Math.min(parseInt(req.query.limit, 10) || 30, MAX_CHAT_PAGE);
+    const limit = pageLimit(req.query.limit, 30, MAX_CHAT_PAGE);
 
     const filter = {
       participants: userObjId,
@@ -39,8 +40,7 @@ async function getChats(req, res, next) {
     };
 
     if (req.query.before) {
-      const d = new Date(req.query.before);
-      if (!Number.isNaN(d.getTime())) filter.lastMessageAt = { $lt: d };
+      Object.assign(filter, cursorFilter(req.query.before, "lastMessageAt"));
     }
 
     const rows = await Chat.find(filter)
@@ -50,7 +50,7 @@ async function getChats(req, res, next) {
         select:
           "text sender mediaUrl thumbnailUrl mediaType mediaName deleted createdAt status",
       })
-      .sort({ lastMessageAt: -1 })
+      .sort({ lastMessageAt: -1, _id: -1 })
       .limit(limit + 1)
       .lean();
 
@@ -81,9 +81,7 @@ async function getChats(req, res, next) {
     res.json({
       chats: formatted,
       hasMore,
-      nextCursor: formatted.length
-        ? formatted[formatted.length - 1].lastMessageAt
-        : null,
+      nextCursor: encodeCursor(chats[chats.length - 1], "lastMessageAt"),
     });
   } catch (err) {
     next(err);
