@@ -4,8 +4,38 @@ const router = express.Router();
 const User = require("../../models/User");
 const { authMiddleware } = require("../../middleware/auth.middleware");
 const { Follow } = require("../model/follow");
-const { DEFAULT_MESSAGE_PERMISSION } = require("../services/messagePrivacy");
+const { canMessageUser, DEFAULT_MESSAGE_PERMISSION } = require("../services/messagePrivacy");
 const mongoose = require("mongoose");
+const { profileAccess } = require("../services/profileAccess");
+const { Block } = require("../model/block");
+const Photo = require("../../mapGallery/models/photos");
+
+function socialChanged(req, ...ids) {
+  const io = req.app?.get("io");
+  ids.forEach(id => io?.to(`user:${id}`).emit("social-updated"));
+}
+
+async function withRelationships(viewerId, items) {
+  if (!items.length) return [];
+  const ids = items.map(u => u._id);
+  const [connections, blocks, accounts] = await Promise.all([
+    Follow.find({$or: [{follower: viewerId, following: {$in: ids}}, {following: viewerId, follower: {$in: ids}}]}).select("follower following status").lean(),
+    Block.find({$or: [{blocker: viewerId, blocked: {$in: ids}}, {blocked: viewerId, blocker: {$in: ids}}]}).select("blocker blocked").lean(),
+    User.find({_id: {$in: [viewerId, ...ids]}}).select("_id privacySettings.messagePermission").lean(),
+  ]);
+  const unavailable = new Set(accounts.filter(u => u.privacySettings?.messagePermission === "nobody").map(u => String(u._id)));
+  const blocked = new Set(blocks.map(b => String(b.blocker) === String(viewerId) ? String(b.blocked) : String(b.blocker)));
+  return items.map(user => {
+    const id = String(user._id);
+    const relationship = {
+      followingStatus: connections.find(c => String(c.follower) === String(viewerId) && String(c.following) === id)?.status || "none",
+      followedByStatus: connections.find(c => String(c.following) === String(viewerId) && String(c.follower) === id)?.status || "none",
+    };
+    return {...user, relationship, canMessage: id !== String(viewerId) && !blocked.has(id)
+      && !unavailable.has(String(viewerId)) && !unavailable.has(id)
+      && relationship.followingStatus === "accepted" && relationship.followedByStatus === "accepted"};
+  });
+}
 // Privacy / follow badalne par socket layer ka cache saaf karna zaroori hai,
 // warna 60 second tak purani permission chalti rahegi.
 const { invalidateUser } = require("../chatSocket");
@@ -29,53 +59,29 @@ async function followState(viewerId, profileId) {
   };
 }
 
-// GET /api/users/followers — people following the logged-in user
-router.get("/followers", authMiddleware, async (req, res) => {
-  try {
-    const userId = currentUserId(req);
-    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
-    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-    const followers = await Follow.find({ following: userId, status: "accepted" })
-      .populate("follower", "_id name avatar bio")
-      .sort({ updatedAt: -1, _id: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-    const items = followers.map((item) => item.follower).filter(Boolean);
-    if (req.query.pagination === "true") {
-      const total = await Follow.countDocuments({ following: userId, status: "accepted" });
-      return res.json({followers: items, page, limit, total, hasMore: page * limit < total});
-    }
-    res.json(items);
-  } catch (err) {
-    console.error("Fetch followers error:", err);
-    res.status(500).json({ error: "Failed to fetch followers" });
-  }
-});
-
-// GET /api/users/following — people the logged-in user follows
-router.get("/following", authMiddleware, async (req, res) => {
-  try {
-    const userId = currentUserId(req);
-    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
-    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-    const following = await Follow.find({ follower: userId, status: "accepted" })
-      .populate("following", "_id name avatar bio")
-      .sort({ updatedAt: -1, _id: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
-    const items = following.map((item) => item.following).filter(Boolean);
-    if (req.query.pagination === "true") {
-      const total = await Follow.countDocuments({ follower: userId, status: "accepted" });
-      return res.json({following: items, page, limit, total, hasMore: page * limit < total});
-    }
-    res.json(items);
-  } catch (err) {
-    console.error("Fetch following error:", err);
-    res.status(500).json({ error: "Failed to fetch following" });
-  }
-});
+// Optional userId selects another profile; the same access check protects both lists.
+for (const mode of ["followers", "following"]) {
+  router.get(`/${mode}`, authMiddleware, async (req, res, next) => {
+    try {
+      const viewerId = currentUserId(req), userId = req.query.userId || viewerId;
+      if (!validUserId(userId)) return res.status(400).json({error: "Invalid user id"});
+      const access = await profileAccess(viewerId, userId);
+      if (!access) return res.status(404).json({error: "User not found"});
+      if (!access.canViewContent) return res.status(403).json({error: "This account is private", code: "PRIVATE_ACCOUNT"});
+      const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 200));
+      const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+      const field = mode === "followers" ? "follower" : "following";
+      const query = {[mode === "followers" ? "following" : "follower"]: userId, status: "accepted"};
+      const [rows, total] = await Promise.all([
+        Follow.find(query).populate(field, "_id name avatar bio").sort({updatedAt: -1, _id: -1}).skip((page - 1) * limit).limit(limit).lean(),
+        Follow.countDocuments(query),
+      ]);
+      const items = await withRelationships(viewerId, rows.map(row => row[field]).filter(Boolean));
+      if (req.query.pagination === "true") return res.json({[mode]: items, page, limit, total, hasMore: page * limit < total});
+      res.json(items);
+    } catch (err) { next(err); }
+  });
+}
 
 // GET /api/users/follow-requests — pending requests for a private account
 router.get("/follow-requests", authMiddleware, async (req, res) => {
@@ -89,7 +95,9 @@ router.get("/follow-requests", authMiddleware, async (req, res) => {
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
-    const items = requests.map((item) => ({ _id: item._id, user: item.follower })).filter((item) => item.user);
+    const people = await withRelationships(userId, requests.map(item => item.follower).filter(Boolean));
+    const byId = new Map(people.map(user => [String(user._id), user]));
+    const items = requests.filter(item => item.follower).map(item => ({_id: item._id, user: byId.get(String(item.follower._id))}));
     if (req.query.pagination === "true") {
       const total = await Follow.countDocuments({following: userId, status: "pending"});
       return res.json({requests: items, page, limit, total, hasMore: page * limit < total});
@@ -123,6 +131,8 @@ router.post("/follow/:userId", authMiddleware, async (req, res) => {
     if (!validUserId(following)) return res.status(400).json({ error: "Invalid user id" });
     if (follower === String(following)) return res.status(400).json({ error: "You cannot follow yourself" });
 
+    const blocked = await Block.exists({$or: [{blocker: follower, blocked: following}, {blocker: following, blocked: follower}]});
+    if (blocked) return res.status(403).json({error: "Cannot follow this user"});
     const target = await User.findById(following).select("privacySettings.isPrivate");
     if (!target) return res.status(404).json({ error: "User not found" });
 
@@ -134,6 +144,7 @@ router.post("/follow/:userId", authMiddleware, async (req, res) => {
     );
     invalidateUser(follower);
     invalidateUser(following);
+    socialChanged(req, follower, following);
     res.status(record.status === "pending" ? 202 : 200).json({ status: record.status });
   } catch (err) {
     console.error("Follow user error:", err);
@@ -150,6 +161,7 @@ router.delete("/follow/:userId", authMiddleware, async (req, res) => {
     await Follow.findOneAndDelete({ follower, following });
     invalidateUser(follower);
     invalidateUser(following);
+    socialChanged(req, follower, following);
     res.json({ message: "Unfollowed" });
   } catch (err) {
     console.error("Unfollow user error:", err);
@@ -163,6 +175,9 @@ router.post("/follow-requests/:userId/approve", authMiddleware, async (req, res)
     const following = currentUserId(req);
     const follower = req.params.userId;
     if (!validUserId(follower)) return res.status(400).json({ error: "Invalid user id" });
+    if (await Block.exists({$or: [{blocker: follower, blocked: following}, {blocker: following, blocked: follower}]})) {
+      return res.status(403).json({error: "Cannot approve this request"});
+    }
     const request = await Follow.findOneAndUpdate(
       { follower, following, status: "pending" },
       { $set: { status: "accepted" } },
@@ -171,6 +186,7 @@ router.post("/follow-requests/:userId/approve", authMiddleware, async (req, res)
     if (!request) return res.status(404).json({ error: "Follow request not found" });
     invalidateUser(follower);
     invalidateUser(following);
+    socialChanged(req, follower, following);
     res.json({ status: "accepted" });
   } catch (err) {
     console.error("Approve follow request error:", err);
@@ -186,6 +202,7 @@ router.delete("/follow-requests/:userId", authMiddleware, async (req, res) => {
     if (!validUserId(follower)) return res.status(400).json({ error: "Invalid user id" });
     const request = await Follow.findOneAndDelete({ follower, following, status: "pending" });
     if (!request) return res.status(404).json({ error: "Follow request not found" });
+    socialChanged(req, follower, following);
     res.json({ message: "Follow request rejected" });
   } catch (err) {
     console.error("Reject follow request error:", err);
@@ -234,7 +251,7 @@ router.get("/", authMiddleware, async (req, res) => {
 
     const users = await User.find(
       query,
-      "_id name avatar email privacySettings.isPrivate"
+      "_id name avatar bio privacySettings.isPrivate"
     )
       .sort({ name: 1 })
       .skip((page - 1) * limit)
@@ -300,7 +317,7 @@ router.get("/privacy", authMiddleware, async (req, res) => {
       hideLastSeen:     user?.privacySettings?.hideLastSeen     ?? false,
       hideOnlineStatus: user?.privacySettings?.hideOnlineStatus ?? false,
       isPrivate:        user?.privacySettings?.isPrivate        ?? false,
-      messagePermission: user?.privacySettings?.messagePermission || DEFAULT_MESSAGE_PERMISSION,
+      messagePermission: user?.privacySettings?.messagePermission === "nobody" ? "nobody" : DEFAULT_MESSAGE_PERMISSION,
     });
   } catch (err) {
     res.status(500).json({ error: "Failed" });
@@ -317,7 +334,7 @@ router.put("/privacy", authMiddleware, async (req, res) => {
     if (typeof hideLastSeen     === "boolean") update["privacySettings.hideLastSeen"]     = hideLastSeen;
     if (typeof hideOnlineStatus === "boolean") update["privacySettings.hideOnlineStatus"] = hideOnlineStatus;
     if (typeof isPrivate === "boolean") update["privacySettings.isPrivate"] = isPrivate;
-    if (["everyone", "followers", "following", "mutual", "nobody"].includes(messagePermission)) {
+    if (["mutual", "nobody"].includes(messagePermission)) {
       update["privacySettings.messagePermission"] = messagePermission;
     } else if (messagePermission !== undefined) {
       return res.status(400).json({ error: "Invalid messagePermission" });
@@ -328,13 +345,14 @@ router.put("/privacy", authMiddleware, async (req, res) => {
     const user = await User.findByIdAndUpdate(userId, { $set: update }, { new: true })
       .select("privacySettings");
     if (!user) return res.status(404).json({ error: "User not found. Please sign in again." });
-    invalidateUser(userId); // socket cache refresh
+    invalidateUser(userId);
+    socialChanged(req, userId);
     res.json({
       message: "Updated",
       hideLastSeen: user.privacySettings.hideLastSeen,
       hideOnlineStatus: user.privacySettings.hideOnlineStatus,
       isPrivate: user.privacySettings.isPrivate,
-      messagePermission: user.privacySettings.messagePermission || DEFAULT_MESSAGE_PERMISSION,
+      messagePermission: user.privacySettings.messagePermission === "nobody" ? "nobody" : DEFAULT_MESSAGE_PERMISSION,
     });
   } catch (err) {
     console.error("Update privacy error:", err);
@@ -342,23 +360,45 @@ router.put("/privacy", authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/users/:id  — single user
-// ⚠️ YEH HAMESHA LAST MEIN RAHEGA
-router.get("/:id", authMiddleware, async (req, res) => {
+router.get("/:id/message-permission", authMiddleware, async (req, res, next) => {
   try {
-    if (!validUserId(req.params.id)) return res.status(400).json({ error: "Invalid user id" });
-    const user = await User.findById(req.params.id).select("_id name email phone avatar bio birthday privacySettings.isPrivate");
-    if (!user) return res.status(404).json({ error: "User not found" });
-    const [followersCount, followingCount, relationship] = await Promise.all([
-      Follow.countDocuments({ following: user._id, status: "accepted" }),
-      Follow.countDocuments({ follower: user._id, status: "accepted" }),
-      currentUserId(req) === String(user._id) ? Promise.resolve(null) : followState(currentUserId(req), user._id),
-    ]);
-    res.json({ ...user.toObject(), followersCount, followingCount, relationship });
-  } catch (err) {
-    console.error("Fetch user error:", err);
-    res.status(500).json({ error: "Failed to fetch user" });
-  }
+    if (!validUserId(req.params.id)) return res.status(400).json({error: "Invalid user id"});
+    res.json(await canMessageUser(currentUserId(req), req.params.id));
+  } catch (err) { next(err); }
 });
 
+router.get("/:id/posts", authMiddleware, async (req, res, next) => {
+  try {
+    if (!validUserId(req.params.id)) return res.status(400).json({error: "Invalid user id"});
+    const access = await profileAccess(currentUserId(req), req.params.id);
+    if (!access) return res.status(404).json({error: "User not found"});
+    if (!access.canViewContent) return res.status(403).json({error: "This account is private", code: "PRIVATE_ACCOUNT"});
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(60, parseInt(req.query.limit, 10) || 30));
+    const rows = await Photo.find({user: req.params.id}).select("image caption location createdAt")
+      .populate("location", "name").sort({createdAt: -1, _id: -1}).skip((page - 1) * limit).limit(limit + 1).lean();
+    res.json({posts: rows.slice(0, limit), page, limit, hasMore: rows.length > limit});
+  } catch (err) { next(err); }
+});
+
+// Keep the profile header and counts visible, but do not leak private content.
+router.get("/:id", authMiddleware, async (req, res, next) => {
+  try {
+    if (!validUserId(req.params.id)) return res.status(400).json({error: "Invalid user id"});
+    const viewerId = currentUserId(req);
+    const access = await profileAccess(viewerId, req.params.id);
+    if (!access) return res.status(404).json({error: "User not found"});
+    const {user, relationship, canViewContent, isSelf, blocked} = access;
+    const [followersCount, followingCount, postsCount, permission] = await Promise.all([
+      Follow.countDocuments({following: user._id, status: "accepted"}),
+      Follow.countDocuments({follower: user._id, status: "accepted"}),
+      Photo.countDocuments({user: user._id}),
+      isSelf ? {allowed: false} : canMessageUser(viewerId, user._id),
+    ]);
+    res.json({_id: user._id, name: user.name, avatar: user.avatar, bio: user.bio,
+      privacySettings: {isPrivate: Boolean(user.privacySettings?.isPrivate)},
+      followersCount, followingCount, postsCount, relationship, canViewContent, isSelf, blocked,
+      canMessage: permission.allowed});
+  } catch (err) { next(err); }
+});
 module.exports = router;

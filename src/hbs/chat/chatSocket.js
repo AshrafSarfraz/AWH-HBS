@@ -59,8 +59,6 @@ const blockCache = new TTLCache({ ttl: 60_000, maxSize: 20_000 });
 // userId -> { name, avatar, hideOnlineStatus, hideLastSeen }
 const userCache = new TTLCache({ ttl: 60_000, maxSize: 20_000 });
 
-// "sender|recipient" -> { allowed, code }
-const permissionCache = new TTLCache({ ttl: 60_000, maxSize: 20_000 });
 
 /** Online users: userId -> Set<socketId> */
 const OnlineUsers = new Map();
@@ -141,14 +139,9 @@ async function isBlocked(a, b) {
   return blockCache.set(key, Boolean(exists));
 }
 
-/** Message bhejne ki ijazat — cached */
+/** Recheck the current follow/block policy for every send. */
 async function checkPermission(senderId, recipientId) {
-  const key = `${senderId}|${recipientId}`;
-  const cached = permissionCache.get(key);
-  if (cached) return cached;
-
-  const result = await canMessageUser(senderId, recipientId);
-  return permissionCache.set(key, result);
+  return canMessageUser(senderId, recipientId);
 }
 
 function isOnline(userId) {
@@ -306,7 +299,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
         }
         const otherUserId = participants.find((id) => id !== String(userId));
 
-        // 2. Ijazat — cached (60s)
+        // 2. Recheck mutual following and blocking before every send.
         const privacy = await checkPermission(userId, otherUserId);
         if (!privacy.allowed) {
           return socket.emit("message-status", {
@@ -719,7 +712,6 @@ module.exports.OnlineUsers = OnlineUsers;
 // Doosre modules cache invalidate kar sakein (block/unblock, privacy change)
 module.exports.invalidateUser = (userId) => {
   userCache.delete(String(userId));
-  permissionCache.deletePrefix(`${userId}|`);
 };
 module.exports.invalidateBlock = (a, b) => blockCache.delete(blockKey(a, b));
 module.exports.invalidateChat = (chatId) => chatMetaCache.delete(String(chatId));

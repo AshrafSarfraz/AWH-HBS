@@ -1,10 +1,3 @@
-// src/hbs/models/User.js
-//
-// KYA BADLA:
-//  - `name` par index (user search ke liye) — pehle har search full scan thi.
-//  - OTP ab plain text me store nahi hoga: `otpHash` + `otpAttempts`.
-//    (phoneAuth.js isay use karta hai — dono files saath change karni hain.)
-//  - email lowercase + trim automatic.
 
 const mongoose = require("mongoose");
 const { HBS_DB } = require("../../database/connect");
@@ -42,7 +35,7 @@ const UserSchema = new mongoose.Schema(
       messagePermission: {
         type: String,
         enum: ["everyone", "followers", "following", "mutual", "nobody"],
-        default: "followers",
+        default: "mutual",
       },
     },
   },

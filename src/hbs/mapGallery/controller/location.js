@@ -1,3 +1,4 @@
+const { visiblePhotoAuthors } = require("../../chat/services/profileAccess");
 // /src/hbs/mapGallery/controller/location.js
 
 require("dotenv").config();
@@ -291,8 +292,10 @@ exports.getLocationPhotos = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const photos = await Photo.find({ location: id })
-      .populate("user", "name profilePhoto")
+    const authorIds = await Photo.distinct("user", {location: id});
+    const visible = await visiblePhotoAuthors(req.user?.id || req.user?._id, authorIds);
+    const photos = await Photo.find({ location: id, user: {$in: visible} })
+      .populate("user", "name avatar")
       .sort({ createdAt: -1 });
 
     return res.json({ data: photos });

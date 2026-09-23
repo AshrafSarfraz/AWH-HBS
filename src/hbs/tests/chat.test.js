@@ -60,6 +60,7 @@ function messageController(rows, capture, allowed=true) {
   return load('../chat/controllers/messageController.js', {
     '../model/chat':{Chat:{findOne:()=>chain(allowed?{_id:C,participants:[A,B]}:null)}},
     '../model/message':{Message:{find:query=>{capture.query=query;return chain(rows,capture);},countDocuments:async()=>3}},
+    '../services/messagePrivacy':{canMessageUser:async()=>({allowed:true})},
     '../../utils/mediaUpload':{uploadMediaBuffer:async()=>{throw Error('not used');}},
   });
 }
@@ -92,8 +93,8 @@ test('media endpoint honors composite before and hasMore', async () => {
 test('social pagination is opt-in, includes totals and retains legacy arrays', async () => {
   const capture={};
   const router=load('../chat/routes/userRoutes.js', {
-    '../../models/User':{}, '../../middleware/auth.middleware':{authMiddleware:()=>{}},
-    '../model/follow':{Follow:{find:()=>chain([{_id:D,follower:{_id:B},following:{_id:B}}],capture),countDocuments:async()=>120}},
+    '../../models/User':{find:()=>chain([])}, '../services/profileAccess':{profileAccess:async()=>({canViewContent:true})}, '../model/block':{Block:{find:()=>chain([])}}, '../../mapGallery/models/photos':{}, '../../middleware/auth.middleware':{authMiddleware:()=>{}},
+    '../model/follow':{Follow:{find:q=>q.$or?chain([]):chain([{_id:D,follower:{_id:B},following:{_id:B}}],capture),countDocuments:async()=>120}},
     '../services/messagePrivacy':{DEFAULT_MESSAGE_PERMISSION:'everyone'}, '../chatSocket':{invalidateUser:()=>{}},
   });
   for(const route of ['/followers','/following','/follow-requests']) {
@@ -112,7 +113,7 @@ async function socketHarness(participants=[A,B], options={}) {
   const Message={findOneAndUpdate:(query)=>{queries.push(query);return chain(null);},updateOne:async query=>{queries.push(query);},find:()=>chain(options.pending || []),updateMany:async()=>{},...options.message};
   const init=load('../chat/chatSocket.js',{
     'socket.io':{Server},'jsonwebtoken':{},'./model/chat':{Chat},'./model/message':{Message},'./model/block':{Block:{exists:async()=>false}},
-    '../models/User':{find:()=>chain([{_id:A,name:'Ashraf'}])},'./services/messagePrivacy':{canMessageUser:async()=>({allowed:true})},
+    '../models/User':{find:()=>chain([{_id:A,name:'Ashraf'}])},'./services/messagePrivacy':{canMessageUser:options.permission || (async()=>({allowed:true}))},
     '../utils/socketratelimiter':{isRateLimited:()=>false},'./sendFCMMessage':{sendPushToUser:async()=>{}},
   });
   init({});
@@ -151,4 +152,15 @@ test('socket retry acknowledges saved message without rebroadcast or another ins
   const ack=h.events.find(e=>e.event==='message-status');
   assert.equal(ack.data.message._id,D); assert.equal(ack.data.msgStatus,'seen');
   assert.equal(creates,0); assert.equal(h.events.some(e=>e.event==='receive-message'),false);
+});
+
+test('a connected socket loses send permission immediately after unfollowing', async () => {
+  let allowed=true,checks=0;
+  const row={_id:D,chat:C,sender:A,tempId:'retry',status:'seen'};
+  const h=await socketHarness([A,B],{permission:async()=>{checks++;return {allowed,code:allowed?null:'MUTUAL_FOLLOW_REQUIRED'};},message:{findOne:async()=>row,findById:()=>chain(row)}});
+  await h.handlers['send-message']({chatId:C,tempId:'retry',text:'hello'});
+  allowed=false;
+  await h.handlers['send-message']({chatId:C,tempId:'second',text:'should be rejected'});
+  assert.equal(checks,2);
+  assert.equal(h.events.some(e=>e.event==='message-status' && e.data.tempId==='second' && e.data.reason==='message_not_allowed'),true);
 });

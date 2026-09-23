@@ -35,7 +35,7 @@ router.patch("/location/:id/name", updateLocationName);
 
 // ── Photos ────────────────────────────────────────────────────────────────────
 
-router.get("/locations/:id/photos", getLocationPhotos);
+router.get("/locations/:id/photos", authMiddleware, getLocationPhotos);
 
 router.get("/my-checkins", authMiddleware, getMyCheckins);
 
