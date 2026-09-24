@@ -7,6 +7,7 @@ const Brand = require("../../models/brands")
 const Location = require("../models/location");
 const Photo = require("../models/photos");
 const axios = require("axios");
+const mongoose = require("mongoose");
 
 // ─────────────────────────────────────────────
 // Helpers
@@ -356,6 +357,24 @@ exports.addPhoto = async (req, res) => {
   }
 };
 
+// Only the authenticated author can delete a post. Do not delete the shared
+// location or storage object: other posts may still reference either one.
+exports.deletePhoto = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) return res.status(401).json({error: "Unauthorized"});
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({error: "Invalid photo id"});
+    }
+    const photo = await Photo.findOneAndDelete({_id: req.params.id, user: userId});
+    if (!photo) return res.status(404).json({error: "Post not found or not owned by you"});
+    return res.json({deleted: true, id: String(photo._id)});
+  } catch (err) {
+    console.error("[deletePhoto]", err.message);
+    return res.status(500).json({error: "Could not delete post"});
+  }
+};
+
 
 /**
  * GET /api/hbs/map/my-checkins
@@ -371,7 +390,7 @@ exports.getMyCheckins = async (req, res) => {
 
     const photos = await Photo.find({ user: userId })
       .populate("location", "name location")
-      .populate("user", "name profilePhoto")
+      .populate("user", "name avatar")
       .sort({ createdAt: -1 });
 
     return res.json({ data: photos });

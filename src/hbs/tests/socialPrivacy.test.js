@@ -50,18 +50,19 @@ test('private content: pending/stranger denied, approved follower and owner allo
   }
 });
 function router(access, extra={}){
-  const capture={};
+  const capture={pushes:[], events:[]};
   const routes=load('../chat/routes/userRoutes.js',{
     '../../models/User':{find:()=>chain([{_id:A},{_id:B}]),...extra.User},
     '../../middleware/auth.middleware':{authMiddleware:()=>{}},
     '../model/follow':{Follow:{find:query=>{capture.query=query;return chain([],capture);},countDocuments:async()=>7,...extra.Follow}},
-    '../model/block':{Block:{find:()=>chain([])}},
+    '../model/block':{Block:{find:()=>chain([]),exists:async()=>false}},
     '../services/messagePrivacy':{DEFAULT_MESSAGE_PERMISSION:'mutual',canMessageUser:async()=>({allowed:false})},
     '../services/profileAccess':{profileAccess:async()=>access},
     '../../mapGallery/models/photos':{find:()=>{capture.photosRead=true;return chain([{_id:'photo',image:'timeline.jpg'}]);},countDocuments:async()=>3,...extra.Photo},
+    '../sendFCMMessage':{sendPushToUser:async data=>{capture.pushes.push(data);}},
     '../chatSocket':{invalidateUser:()=>{}},
   });
-  return {capture,handler:(p)=>routes.stack.find(r=>r.route?.path===p).route.stack.at(-1).handle};
+  return {capture,handler:(p,method='get')=>routes.stack.find(r=>r.route?.path===p && r.route.methods[method]).route.stack.at(-1).handle};
 }
 test('private profile exposes counts but lists and post endpoints return 403 without reading posts',async()=>{
   const access={user:{_id:B,name:'Ashraf',privacySettings:{isPrivate:true}},canViewContent:false,relationship:{}};
@@ -97,4 +98,57 @@ test('location gallery only queries photos by privacy-approved authors',async()=
   });
   const res=response();await controller.getLocationPhotos({params:{id:'place'},user:{id:A}},res);
   assert.deepEqual(Array.from(query.user.$in),[A]);
+});
+
+
+test('new private request notifies recipient once; retry does not notify again', async()=>{
+  let inserted=false;
+  const {handler,capture}=router(null,{
+    User:{findById:id=>chain(id===B?{privacySettings:{isPrivate:true}}:{name:'Ashraf'})},
+    Follow:{findOneAndUpdate:async(query,update,options)=>{
+      assert.equal(query.follower,A);assert.equal(query.following,B);
+      assert.equal(update.$setOnInsert.status,'pending');assert.equal(options.includeResultMetadata,true);
+      const result={value:{status:'pending'},lastErrorObject:{updatedExisting:inserted}};inserted=true;return result;
+    }},
+  });
+  const io={to:room=>({emit:event=>capture.events.push([room,event])})};
+  for(let i=0;i<2;i++){
+    const res=response();await handler('/follow/:userId','post')({user:{id:A},params:{userId:B},app:{get:()=>io}},res);
+    assert.equal(res.statusCode,202);assert.equal(res.data.status,'pending');
+  }
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(capture.pushes.length,1);assert.equal(capture.pushes[0].userId,B);
+  assert.equal(capture.pushes[0].data.type,'follow_request');assert.equal(capture.pushes[0].data.recipientId,B);
+  assert.ok(capture.events.some(([room])=>room===`user:${B}`));
+});
+test('public follow notifies recipient, and approval notifies original sender',async()=>{
+  for(const isApproval of [false,true]){
+    const {handler,capture}=router(null,{
+      User:{findById:()=>chain({name:'Friend',privacySettings:{isPrivate:false}})},
+      Follow:{findOneAndUpdate:async(query)=>{
+        if(isApproval){assert.equal(query.following,B);assert.equal(query.follower,A);assert.equal(query.status,'pending');return {status:'accepted'};}
+        return {value:{status:'accepted'},lastErrorObject:{updatedExisting:false}};
+      }},
+    });
+    const res=response();
+    await handler(isApproval?'/follow-requests/:userId/approve':'/follow/:userId','post')(
+      {user:{id:isApproval?B:A},params:{userId:isApproval?A:B}},res);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(res.statusCode,200);assert.equal(capture.pushes.length,1);
+    assert.equal(capture.pushes[0].userId,isApproval?A:B);
+    assert.equal(capture.pushes[0].data.type,isApproval?'follow_accepted':'new_follower');
+  }
+});
+test('post delete enforces ownership atomically and rejects missing/invalid identities',async()=>{
+  const stored={_id:B,user:A};let calls=0;
+  const controller=load('../mapGallery/controller/location.js',{
+    '../../chat/services/profileAccess':{},dotenv:{config(){}},'../../models/venue':{},'../../models/brands':{},'../models/location':{},axios:{},
+    '../models/photos':{findOneAndDelete:async query=>{calls++;return query._id===stored._id&&query.user===stored.user?stored:null;}},
+  });
+  for(const [user,id,status] of [[undefined,B,401],[A,'bad-id',400],[B,B,404],[A,B,200]]){
+    const res=response();await controller.deletePhoto({user:user?{id:user}:undefined,params:{id}},res);
+    assert.equal(res.statusCode,status);
+    if(status===200)assert.equal(res.data.deleted,true);
+  }
+  assert.equal(calls,2);
 });

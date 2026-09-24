@@ -13,7 +13,7 @@ const { authMiddleware } = require('../../middleware/auth.middleware');
 router.get('/blocked-list', authMiddleware, async (req, res) => {
   try {
     const list = await Block.find({ blocker: req.user.id })
-      .populate('blocked', 'name email');
+      .populate('blocked', 'name email avatar');
     res.json(list);
   } catch (err) {
     console.error('Blocked list error:', err);

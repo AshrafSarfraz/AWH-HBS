@@ -95,7 +95,8 @@ test('social pagination is opt-in, includes totals and retains legacy arrays', a
   const router=load('../chat/routes/userRoutes.js', {
     '../../models/User':{find:()=>chain([])}, '../services/profileAccess':{profileAccess:async()=>({canViewContent:true})}, '../model/block':{Block:{find:()=>chain([])}}, '../../mapGallery/models/photos':{}, '../../middleware/auth.middleware':{authMiddleware:()=>{}},
     '../model/follow':{Follow:{find:q=>q.$or?chain([]):chain([{_id:D,follower:{_id:B},following:{_id:B}}],capture),countDocuments:async()=>120}},
-    '../services/messagePrivacy':{DEFAULT_MESSAGE_PERMISSION:'everyone'}, '../chatSocket':{invalidateUser:()=>{}},
+    '../services/messagePrivacy':{DEFAULT_MESSAGE_PERMISSION:'everyone'}, '../sendFCMMessage':{sendPushToUser:async()=>{}},
+    '../chatSocket':{invalidateUser:()=>{}},
   });
   for(const route of ['/followers','/following','/follow-requests']) {
     const handler=router.stack.find(r=>r.route?.path===route).route.stack.at(-1).handle;

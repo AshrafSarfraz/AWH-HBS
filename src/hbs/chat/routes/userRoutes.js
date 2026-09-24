@@ -9,6 +9,18 @@ const mongoose = require("mongoose");
 const { profileAccess } = require("../services/profileAccess");
 const { Block } = require("../model/block");
 const Photo = require("../../mapGallery/models/photos");
+const {sendPushToUser} = require("../sendFCMMessage");
+
+async function notifyFollow(userId, actorId, type) {
+  try {
+    const actor = await User.findById(actorId).select("name").lean();
+    const name = actor?.name || "Someone";
+    const body = type === "follow_request" ? `${name} sent you a follow request. Tap to accept or decline.`
+      : type === "follow_accepted" ? `${name} accepted your follow request.` : `${name} started following you. Tap to follow back.`;
+    await sendPushToUser({userId, title: type === "follow_request" ? "New follow request" : "Hala community", body,
+      data: {type, senderId: actorId, recipientId: userId}});
+  } catch (err) { console.error("[Follow notification]", err.message); }
+}
 
 function socialChanged(req, ...ids) {
   const io = req.app?.get("io");
@@ -137,14 +149,19 @@ router.post("/follow/:userId", authMiddleware, async (req, res) => {
     if (!target) return res.status(404).json({ error: "User not found" });
 
     const status = target.privacySettings?.isPrivate ? "pending" : "accepted";
-    const record = await Follow.findOneAndUpdate(
+    const result = await Follow.findOneAndUpdate(
       { follower, following },
       { $setOnInsert: { status } },
-      { new: true, upsert: true }
+      { new: true, upsert: true, includeResultMetadata: true }
     );
+    const record = result.value;
     invalidateUser(follower);
     invalidateUser(following);
     socialChanged(req, follower, following);
+    // Atomic upsert metadata prevents duplicate notifications on retries.
+    if (!result.lastErrorObject?.updatedExisting) {
+      void notifyFollow(following, follower, record.status === "pending" ? "follow_request" : "new_follower");
+    }
     res.status(record.status === "pending" ? 202 : 200).json({ status: record.status });
   } catch (err) {
     console.error("Follow user error:", err);
@@ -188,6 +205,7 @@ router.post("/follow-requests/:userId/approve", authMiddleware, async (req, res)
     invalidateUser(following);
     socialChanged(req, follower, following);
     res.json({ status: "accepted" });
+    void notifyFollow(follower, following, "follow_accepted");
   } catch (err) {
     console.error("Approve follow request error:", err);
     res.status(500).json({ error: "Failed to approve follow request" });

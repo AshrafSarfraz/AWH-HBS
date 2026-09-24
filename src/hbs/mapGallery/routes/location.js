@@ -10,6 +10,7 @@ const {
   updateLocationName,
   getLocationPhotos,
   addPhoto,
+  deletePhoto,
   getMyCheckins,
   getVenueMarkers,
 } = require("../controller/location");
@@ -40,6 +41,7 @@ router.get("/locations/:id/photos", authMiddleware, getLocationPhotos);
 router.get("/my-checkins", authMiddleware, getMyCheckins);
 
 router.post("/photos", authMiddleware, addPhoto);
+router.delete("/photos/:id", authMiddleware, deletePhoto);
 
 router.get("/venue-markers", getVenueMarkers);
 
