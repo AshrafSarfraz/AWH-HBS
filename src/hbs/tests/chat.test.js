@@ -90,21 +90,6 @@ test('media endpoint honors composite before and hasMore', async () => {
   assert.equal(res.data.hasMore,true); assert.equal(capture.query.$or[1]._id.$lt,D);
   assert.equal(res.data.nextCursor,encodeCursor(res.data.media[0]));
 });
-test('social pagination is opt-in, includes totals and retains legacy arrays', async () => {
-  const capture={};
-  const router=load('../chat/routes/userRoutes.js', {
-    '../../models/User':{find:()=>chain([])}, '../services/profileAccess':{profileAccess:async()=>({canViewContent:true})}, '../model/block':{Block:{find:()=>chain([])}}, '../../mapGallery/models/photos':{}, '../../middleware/auth.middleware':{authMiddleware:()=>{}},
-    '../model/follow':{Follow:{find:q=>q.$or?chain([]):chain([{_id:D,follower:{_id:B},following:{_id:B}}],capture),countDocuments:async()=>120}},
-    '../services/messagePrivacy':{DEFAULT_MESSAGE_PERMISSION:'everyone'}, '../sendFCMMessage':{sendPushToUser:async()=>{}},
-    '../chatSocket':{invalidateUser:()=>{}},
-  });
-  for(const route of ['/followers','/following','/follow-requests']) {
-    const handler=router.stack.find(r=>r.route?.path===route).route.stack.at(-1).handle;
-    let res=response(); await handler({user:{id:A},query:{pagination:'true',limit:'1',page:'2'}},res);
-    assert.equal(res.data.total,120); assert.equal(res.data.hasMore,true); assert.equal(capture.skip,1);
-    res=response(); await handler({user:{id:A},query:{}},res); assert.ok(Array.isArray(res.data));
-  }
-});
 async function socketHarness(participants=[A,B], options={}) {
   const events=[],handlers={},queries=[],joins=[];
   let connect;
@@ -155,10 +140,10 @@ test('socket retry acknowledges saved message without rebroadcast or another ins
   assert.equal(creates,0); assert.equal(h.events.some(e=>e.event==='receive-message'),false);
 });
 
-test('a connected socket loses send permission immediately after unfollowing', async () => {
+test('a connected socket loses send permission immediately after removing a friend', async () => {
   let allowed=true,checks=0;
   const row={_id:D,chat:C,sender:A,tempId:'retry',status:'seen'};
-  const h=await socketHarness([A,B],{permission:async()=>{checks++;return {allowed,code:allowed?null:'MUTUAL_FOLLOW_REQUIRED'};},message:{findOne:async()=>row,findById:()=>chain(row)}});
+  const h=await socketHarness([A,B],{permission:async()=>{checks++;return {allowed,code:allowed?null:'FRIENDSHIP_REQUIRED'};},message:{findOne:async()=>row,findById:()=>chain(row)}});
   await h.handlers['send-message']({chatId:C,tempId:'retry',text:'hello'});
   allowed=false;
   await h.handlers['send-message']({chatId:C,tempId:'second',text:'should be rejected'});

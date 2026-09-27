@@ -120,7 +120,7 @@ async function uploadMedia(req, res, next) {
       const chat = await assertParticipant(chatId, userId);
       if (!chat) return res.status(403).json({ error: "Access denied for this chat" });
       const otherId = chat.participants.find(id => String(id) !== String(userId));
-      if (!(await canMessageUser(userId, otherId)).allowed) return res.status(403).json({error: "Mutual following is required"});
+      if (!(await canMessageUser(userId, otherId)).allowed) return res.status(403).json({error: "An accepted friendship and messaging permission are required"});
     }
 
     const result = await uploadMediaBuffer({

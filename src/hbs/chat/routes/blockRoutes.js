@@ -1,6 +1,8 @@
 // /src/hbs/chat/routes/blockRoutes.js
 const express = require('express');
 const router = express.Router();
+const {Friendship, pairKey} = require('../model/friendship');
+const {invalidateUser, invalidateBlock} = require('../chatSocket');
 const { Block } = require('../model/block');
 const { authMiddleware } = require('../../middleware/auth.middleware');
 
@@ -61,7 +63,10 @@ router.post('/:userId', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Khud ko block nahi kar sakte' });
     }
 
-    await Block.create({ blocker: blockerId, blocked: blockedId });
+    await Block.updateOne({blocker:blockerId,blocked:blockedId}, {$setOnInsert:{blocker:blockerId,blocked:blockedId}}, {upsert:true});
+    await Friendship.updateOne({pairKey:pairKey(blockerId,blockedId)},
+      {$set:{status:'removed'}, $setOnInsert:{members:[blockerId,blockedId],requestedBy:blockerId}}, {upsert:true});
+    invalidateUser(blockerId); invalidateUser(blockedId); invalidateBlock(blockerId, blockedId);
     const io = req.app?.get('io');
     for (const id of [blockerId, blockedId]) io?.to(`user:${id}`).emit('social-updated');
     res.json({ message: 'User blocked' });
@@ -83,6 +88,7 @@ router.delete('/:userId', authMiddleware, async (req, res) => {
     const blockedId = req.params.userId;
 
     await Block.findOneAndDelete({ blocker: blockerId, blocked: blockedId });
+    invalidateUser(blockerId); invalidateUser(blockedId); invalidateBlock(blockerId, blockedId);
     const io = req.app?.get('io');
     for (const id of [blockerId, blockedId]) io?.to(`user:${id}`).emit('social-updated');
     res.json({ message: 'User unblocked' });

@@ -5,12 +5,13 @@
 //    participant aur lastMessage populate hota tha).
 //  - `.lean()` — mongoose document objects banane ka overhead khatam.
 //  - Purana commented-out code (200+ lines) hata diya.
-//  - deleteChat ab background me messages update karta hai taake API foran
-//    jawab de.
+//  - Delete Chat changes personal visibility; friendship remains independent.
 
 const mongoose = require("mongoose");
 const {pageLimit, encodeCursor, cursorFilter} = require("../pagination");
 const { Chat } = require("../model/chat");
+const {Friendship} = require("../model/friendship");
+const {ensureFriendChat} = require("../services/friendChat");
 const { Message } = require("../model/message");
 const { canMessageUser } = require("../services/messagePrivacy");
 require("../../models/User"); // populate ke liye model register hona zaroori hai
@@ -33,10 +34,11 @@ async function getChats(req, res, next) {
     const userObjId = new Types.ObjectId(userId);
     const limit = pageLimit(req.query.limit, 30, MAX_CHAT_PAGE);
 
+    const friends = await Friendship.find({members: userObjId, status: "accepted"}).select("pairKey").lean();
     const filter = {
       participants: userObjId,
       deletedFor: { $ne: userObjId },
-      lastMessage: { $ne: null },
+      $and: [{$or: [{lastMessage: {$ne: null}}, {pairKey: {$in: friends.map(f => f.pairKey)}}]}],
     };
 
     if (req.query.before) {
@@ -47,6 +49,7 @@ async function getChats(req, res, next) {
       .populate("participants", "name email avatar lastSeen privacySettings")
       .populate({
         path: "lastMessage",
+        match: {deletedFor: {$ne: userObjId}},
         select:
           "text sender mediaUrl thumbnailUrl mediaType mediaName deleted createdAt status",
       })
@@ -121,19 +124,10 @@ async function getOrCreateChat(req, res, next) {
     const userObjId = new Types.ObjectId(userId);
     const participantObjId = new Types.ObjectId(participantId);
 
-    // Upsert — pehle findOne, phir shayad create (2 round trips) hota tha.
-    // Ab ek atomic operation, aur race condition bhi nahi.
-    const chat = await Chat.findOneAndUpdate(
-      { participants: { $all: [userObjId, participantObjId], $size: 2 } },
-      {
-        $setOnInsert: { participants: [userObjId, participantObjId] },
-        $pull: { deletedFor: userObjId },
-      },
-      { new: true, upsert: true, setDefaultsOnInsert: true }
-    )
+    const canonical = await ensureFriendChat(userObjId, participantObjId, [userObjId]);
+    const chat = await Chat.findById(canonical._id)
       .populate("participants", "name email avatar lastSeen privacySettings")
-      .populate("lastMessage")
-      .lean();
+      .populate({path: "lastMessage", match: {deletedFor: {$ne: userObjId}}}).lean();
 
     const other =
       chat.participants.find((p) => String(p._id) !== userId) || null;
@@ -179,28 +173,10 @@ async function deleteChat(req, res, next) {
       return res.status(404).json({ error: "Chat not found or access denied" });
     }
 
-    const allDeleted = chat.participants.every((p) =>
-      (chat.deletedFor || []).some((d) => String(d) === String(p))
-    );
-
-    // API foran jawab de — bhaari kaam background me
-    res.json({ message: "Chat deleted successfully", chatId });
-
-    setImmediate(async () => {
-      try {
-        if (allDeleted) {
-          await Message.deleteMany({ chat: chatId });
-          await Chat.deleteOne({ _id: chatId });
-        } else {
-          await Message.updateMany(
-            { chat: chatId },
-            { $addToSet: { deletedFor: userObjId } }
-          );
-        }
-      } catch (e) {
-        console.error("[deleteChat background]", e.message);
-      }
-    });
+    // Keep the canonical chat and the other member's history. Deleting a chat
+    // changes personal visibility, never friendship or the shared conversation.
+    await Message.updateMany({chat: chatId}, {$addToSet: {deletedFor: userObjId}});
+    res.json({message: "Chat deleted successfully", chatId});
   } catch (err) {
     next(err);
   }

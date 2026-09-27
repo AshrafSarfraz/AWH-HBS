@@ -1,6 +1,11 @@
 // /src/hbs/routes/userRoutes.js
 const express = require("express");
 const router = express.Router();
+const {Friendship, pairKey, friendshipStatus} = require("../model/friendship");
+router.use(require("./friendRoutes"));
+// Preserve legacy follow data, but disable this feature until a future feed.
+router.use(["/follow", "/follow-requests", "/follow-status", "/followers", "/following"], (req,res) =>
+  res.status(410).json({error:"Please update the app and use Friends.",code:"FOLLOW_DISABLED"}));
 const User = require("../../models/User");
 const { authMiddleware } = require("../../middleware/auth.middleware");
 const { Follow } = require("../model/follow");
@@ -280,38 +285,14 @@ router.get("/", authMiddleware, async (req, res) => {
     const pageUsers = hasMore ? users.slice(0, limit) : users;
     const pageIds = pageUsers.map((u) => u._id);
 
-    // Sirf is page ke users ke relationships — pehle SAB aate the
-    const connections = pageIds.length
-      ? await Follow.find({
-          $or: [
-            { follower: userId, following: { $in: pageIds } },
-            { follower: { $in: pageIds }, following: userId },
-          ],
-        })
-          .select("follower following status")
-          .lean()
-      : [];
-
-    const relationshipByUser = new Map();
-    for (const c of connections) {
-      const otherId =
-        String(c.follower) === userId ? String(c.following) : String(c.follower);
-      const prev = relationshipByUser.get(otherId) || {
-        followingStatus: "none",
-        followedByStatus: "none",
-      };
-      if (String(c.follower) === userId) prev.followingStatus = c.status;
-      else prev.followedByStatus = c.status;
-      relationshipByUser.set(otherId, prev);
-    }
-
+    const [relations, blocks] = await Promise.all([
+      Friendship.find({members:userId, pairKey:{$in:pageIds.map(id=>pairKey(userId,id))}}).lean(),
+      Block.find({$or:[{blocker:userId},{blocked:userId}]}).lean(),
+    ]);
+    const blockedIds=new Set(blocks.map(b=>String(b.blocker)===userId?String(b.blocked):String(b.blocker)));
     res.json({
-      users: pageUsers.map((user) => ({
-        ...user,
-        relationship: relationshipByUser.get(String(user._id)) || {
-          followingStatus: "none",
-          followedByStatus: "none",
-        },
+      users: pageUsers.filter(user=>!blockedIds.has(String(user._id))).map(user=>({
+        ...user, friendshipStatus:friendshipStatus(relations.find(r=>r.pairKey===pairKey(userId,user._id)),userId),
       })),
       page,
       limit,
@@ -352,8 +333,8 @@ router.put("/privacy", authMiddleware, async (req, res) => {
     if (typeof hideLastSeen     === "boolean") update["privacySettings.hideLastSeen"]     = hideLastSeen;
     if (typeof hideOnlineStatus === "boolean") update["privacySettings.hideOnlineStatus"] = hideOnlineStatus;
     if (typeof isPrivate === "boolean") update["privacySettings.isPrivate"] = isPrivate;
-    if (["mutual", "nobody"].includes(messagePermission)) {
-      update["privacySettings.messagePermission"] = messagePermission;
+    if (["friends", "mutual", "nobody"].includes(messagePermission)) {
+      update["privacySettings.messagePermission"] = messagePermission === "nobody" ? "nobody" : "friends";
     } else if (messagePermission !== undefined) {
       return res.status(400).json({ error: "Invalid messagePermission" });
     }
@@ -407,15 +388,14 @@ router.get("/:id", authMiddleware, async (req, res, next) => {
     const access = await profileAccess(viewerId, req.params.id);
     if (!access) return res.status(404).json({error: "User not found"});
     const {user, relationship, canViewContent, isSelf, blocked} = access;
-    const [followersCount, followingCount, postsCount, permission] = await Promise.all([
-      Follow.countDocuments({following: user._id, status: "accepted"}),
-      Follow.countDocuments({follower: user._id, status: "accepted"}),
+    const [friendsCount, postsCount, permission] = await Promise.all([
+      Friendship.countDocuments({members: user._id, status: "accepted"}),
       Photo.countDocuments({user: user._id}),
       isSelf ? {allowed: false} : canMessageUser(viewerId, user._id),
     ]);
     res.json({_id: user._id, name: user.name, avatar: user.avatar, bio: user.bio,
       privacySettings: {isPrivate: Boolean(user.privacySettings?.isPrivate)},
-      followersCount, followingCount, postsCount, relationship, canViewContent, isSelf, blocked,
+      friendsCount, postsCount, friendshipStatus: access.friendshipStatus, canViewContent, isSelf, blocked,
       canMessage: permission.allowed});
   } catch (err) { next(err); }
 });

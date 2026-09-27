@@ -139,7 +139,7 @@ async function isBlocked(a, b) {
   return blockCache.set(key, Boolean(exists));
 }
 
-/** Recheck the current follow/block policy for every send. */
+/** Recheck the current friendship/block policy for every send. */
 async function checkPermission(senderId, recipientId) {
   return canMessageUser(senderId, recipientId);
 }
@@ -299,7 +299,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
         }
         const otherUserId = participants.find((id) => id !== String(userId));
 
-        // 2. Recheck mutual following and blocking before every send.
+        // 2. Recheck accepted friendship and blocking before every send.
         const privacy = await checkPermission(userId, otherUserId);
         if (!privacy.allowed) {
           return socket.emit("message-status", {
@@ -458,7 +458,12 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
 
     // ── EDIT MESSAGE ──────────────────────────────────────────────────
     safe("edit-message", async ({ messageId, chatId, newText } = {}) => {
-      if (!(await getChatParticipants(chatId))?.includes(String(userId))) return;
+      const participants = await getChatParticipants(chatId);
+      if (!participants?.includes(String(userId))) return;
+      const other = participants.find(id => id !== String(userId));
+      if (!other || !(await checkPermission(userId, other)).allowed) {
+        return socket.emit("message-error", {message: "An accepted friendship and messaging permission are required"});
+      }
       const text = (newText || "").trim();
       if (!text) return socket.emit("message-error", { message: "Empty text" });
       if (text.length > 1000)
@@ -545,7 +550,12 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
 
     // ── REACTIONS ─────────────────────────────────────────────────────
     safe("react-message", async ({ messageId, chatId, emoji } = {}) => {
-      if (!(await getChatParticipants(chatId))?.includes(String(userId))) return;
+      const participants = await getChatParticipants(chatId);
+      if (!participants?.includes(String(userId))) return;
+      const other = participants.find(id => id !== String(userId));
+      if (!other || !(await checkPermission(userId, other)).allowed) {
+        return socket.emit("message-error", {message: "An accepted friendship and messaging permission are required"});
+      }
       if (emoji != null && (typeof emoji !== "string" || emoji.length > 32)) return;
       const update = emoji
         ? { $set: { [`reactions.${userId}`]: emoji } }
@@ -589,7 +599,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
     });
 
     // ── TYPING ────────────────────────────────────────────────────────
-    // ✅ ZERO DB QUERIES. Pehle har keystroke par 2 queries chalti thin.
+    // Throttle typing and check current friendship permission before delivery.
     let lastTypingAt = 0;
 
     safe("typing", async ({ chatId } = {}) => {
@@ -602,7 +612,7 @@ const initializeSocket = (server, { allowedOrigins } = {}) => {
 
       const other = participants.find((id) => id !== String(userId));
       if (!other) return;
-      if (await isBlocked(userId, other)) return; // cached
+      if (!(await checkPermission(userId, other)).allowed) return;
 
       socket.to(`chat:${chatId}`).emit("typing", { userId });
     });

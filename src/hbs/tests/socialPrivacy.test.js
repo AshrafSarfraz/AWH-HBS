@@ -18,31 +18,33 @@ function chain(value,capture={}) {
   return q;
 }
 function response(){return {statusCode:200,status(n){this.statusCode=n;return this;},json(data){this.data=data;return this;}};}
-function messageService(forward,reverse,permission='everyone',blocked=false){
+const pairKey = (a,b) => [String(a),String(b)].sort().join(':');
+const friendshipStatus = (row,viewer) => !row || row.status==='removed' ? 'none' : row.status==='accepted' ? 'accepted' : String(row.requestedBy)===String(viewer) ? 'outgoing':'incoming';
+function messageService(accepted,permission='everyone',blocked=false){
   return load('../chat/services/messagePrivacy.js',{
     '../../models/User':{find:()=>chain([{_id:A},{_id:B,privacySettings:{messagePermission:permission}}])},
     '../model/block':{Block:{exists:async()=>blocked}},
-    '../model/follow':{Follow:{exists:async q=>q.follower===A?forward:reverse}},
+    '../model/friendship':{pairKey,Friendship:{exists:async q=>{assert.equal(q.status,'accepted');return accepted;}}},
   });
 }
-test('all messaging settings require accepted follows in BOTH directions',async()=>{
-  for(const permission of ['everyone','followers','following','mutual',undefined]){
-    for(const [forward,reverse] of [[false,false],[true,false],[false,true],[true,true]]){
-      const result=await messageService(forward,reverse,permission).canMessageUser(A,B);
-      assert.equal(result.allowed,forward&&reverse,`${permission}: ${forward}/${reverse}`);
+test('all legacy messaging settings require a friendship; follows are never consulted',async()=>{
+  for(const permission of ['everyone','followers','following','mutual','friends',undefined]){
+    for(const accepted of [false,true]){
+      assert.equal((await messageService(accepted,permission).canMessageUser(A,B)).allowed,accepted);
+      assert.equal((await messageService(accepted,permission).canMessageUser(B,A)).allowed,accepted);
     }
   }
 });
-test('blocking, nobody and self-messaging remain denied even for mutual follows',async()=>{
-  assert.equal((await messageService(true,true,'nobody').canMessageUser(A,B)).allowed,false);
-  assert.equal((await messageService(true,true,'mutual',true).canMessageUser(A,B)).code,'BLOCKED');
-  assert.equal((await messageService(true,true).canMessageUser(A,A)).allowed,false);
+test('blocking, nobody and self-messaging remain denied even for friends',async()=>{
+  assert.equal((await messageService(true,'nobody').canMessageUser(A,B)).code,'MESSAGES_DISABLED');
+  assert.equal((await messageService(true,'friends',true).canMessageUser(A,B)).code,'BLOCKED');
+  assert.equal((await messageService(true).canMessageUser(A,A)).allowed,false);
 });
-test('private content: pending/stranger denied, approved follower and owner allowed; blocks override',async()=>{
-  for(const status of ['none','pending','accepted'])for(const blocked of [false,true]){
+test('private content: pending/stranger denied, accepted friend and owner allowed; blocks override',async()=>{
+  for(const status of ['removed','pending','accepted'])for(const blocked of [false,true]){
     const service=load('../chat/services/profileAccess.js',{
       '../../models/User':{findById:()=>chain({_id:B,privacySettings:{isPrivate:true}})},
-      '../model/follow':{Follow:{findOne:q=>chain(q.follower===A?{status}:null)}},
+      '../model/friendship':{pairKey,friendshipStatus,Friendship:{findOne:()=>chain({status,requestedBy:A})}},
       '../model/block':{Block:{exists:async()=>blocked}},
     });
     assert.equal((await service.profileAccess(A,B)).canViewContent,status==='accepted'&&!blocked);
@@ -53,6 +55,8 @@ function router(access, extra={}){
   const capture={pushes:[], events:[]};
   const routes=load('../chat/routes/userRoutes.js',{
     '../../models/User':{find:()=>chain([{_id:A},{_id:B}]),...extra.User},
+    './friendRoutes':require('express').Router(),
+    '../model/friendship':{pairKey,friendshipStatus,Friendship:{countDocuments:async()=>7}},
     '../../middleware/auth.middleware':{authMiddleware:()=>{}},
     '../model/follow':{Follow:{find:query=>{capture.query=query;return chain([],capture);},countDocuments:async()=>7,...extra.Follow}},
     '../model/block':{Block:{find:()=>chain([]),exists:async()=>false}},
@@ -67,27 +71,19 @@ function router(access, extra={}){
 test('private profile exposes counts but lists and post endpoints return 403 without reading posts',async()=>{
   const access={user:{_id:B,name:'Ashraf',privacySettings:{isPrivate:true}},canViewContent:false,relationship:{}};
   const {handler,capture}=router(access);
-  for(const endpoint of ['/followers','/following','/:id/posts']){
+  for(const endpoint of ['/:id/posts']){
     const res=response();await handler(endpoint)({user:{id:A},params:{id:B},query:{userId:B}},res,e=>{throw e;});
     assert.equal(res.statusCode,403);
   }
   assert.equal(capture.photosRead,undefined);
   const res=response();await handler('/:id')({user:{id:A},params:{id:B}},res,e=>{throw e;});
-  assert.equal(res.data.followersCount,7);assert.equal(res.data.followingCount,7);assert.equal(res.data.postsCount,3);
+  assert.equal(res.data.friendsCount,7);assert.equal(res.data.postsCount,3);
   assert.equal(res.data.canViewContent,false);assert.equal(res.data.canMessage,false);assert.equal(res.data.posts,undefined);
 });
 test('public/approved profile posts are the Timeline Photo records',async()=>{
   const {handler}=router({canViewContent:true});const res=response();
   await handler('/:id/posts')({user:{id:A},params:{id:B},query:{}},res,e=>{throw e;});
   assert.equal(res.data.posts[0].image,'timeline.jpg');assert.equal(res.data.hasMore,false);
-});
-test('connection Message flags are relative to viewer, not the profile being browsed',async()=>{
-  const follows=[{follower:A,following:B,status:'accepted'},{follower:B,following:A,status:'accepted'}];
-  const {handler}=router({canViewContent:true},{Follow:{find:q=>chain(q.$or?follows:[{follower:{_id:B,name:'Friend'}}])}});
-  const res=response();await handler('/followers')({user:{id:A},query:{userId:B,pagination:'true'}},res,e=>{throw e;});
-  assert.equal(res.data.followers[0].canMessage,true);
-  follows.pop();const res2=response();await handler('/followers')({user:{id:A},query:{userId:B,pagination:'true'}},res2,e=>{throw e;});
-  assert.equal(res2.data.followers[0].canMessage,false);
 });
 test('location gallery only queries photos by privacy-approved authors',async()=>{
   let query;
@@ -101,44 +97,6 @@ test('location gallery only queries photos by privacy-approved authors',async()=
 });
 
 
-test('new private request notifies recipient once; retry does not notify again', async()=>{
-  let inserted=false;
-  const {handler,capture}=router(null,{
-    User:{findById:id=>chain(id===B?{privacySettings:{isPrivate:true}}:{name:'Ashraf'})},
-    Follow:{findOneAndUpdate:async(query,update,options)=>{
-      assert.equal(query.follower,A);assert.equal(query.following,B);
-      assert.equal(update.$setOnInsert.status,'pending');assert.equal(options.includeResultMetadata,true);
-      const result={value:{status:'pending'},lastErrorObject:{updatedExisting:inserted}};inserted=true;return result;
-    }},
-  });
-  const io={to:room=>({emit:event=>capture.events.push([room,event])})};
-  for(let i=0;i<2;i++){
-    const res=response();await handler('/follow/:userId','post')({user:{id:A},params:{userId:B},app:{get:()=>io}},res);
-    assert.equal(res.statusCode,202);assert.equal(res.data.status,'pending');
-  }
-  await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(capture.pushes.length,1);assert.equal(capture.pushes[0].userId,B);
-  assert.equal(capture.pushes[0].data.type,'follow_request');assert.equal(capture.pushes[0].data.recipientId,B);
-  assert.ok(capture.events.some(([room])=>room===`user:${B}`));
-});
-test('public follow notifies recipient, and approval notifies original sender',async()=>{
-  for(const isApproval of [false,true]){
-    const {handler,capture}=router(null,{
-      User:{findById:()=>chain({name:'Friend',privacySettings:{isPrivate:false}})},
-      Follow:{findOneAndUpdate:async(query)=>{
-        if(isApproval){assert.equal(query.following,B);assert.equal(query.follower,A);assert.equal(query.status,'pending');return {status:'accepted'};}
-        return {value:{status:'accepted'},lastErrorObject:{updatedExisting:false}};
-      }},
-    });
-    const res=response();
-    await handler(isApproval?'/follow-requests/:userId/approve':'/follow/:userId','post')(
-      {user:{id:isApproval?B:A},params:{userId:isApproval?A:B}},res);
-    await new Promise(resolve=>setImmediate(resolve));
-    assert.equal(res.statusCode,200);assert.equal(capture.pushes.length,1);
-    assert.equal(capture.pushes[0].userId,isApproval?A:B);
-    assert.equal(capture.pushes[0].data.type,isApproval?'follow_accepted':'new_follower');
-  }
-});
 test('post delete enforces ownership atomically and rejects missing/invalid identities',async()=>{
   const stored={_id:B,user:A};let calls=0;
   const controller=load('../mapGallery/controller/location.js',{

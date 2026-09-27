@@ -11,6 +11,7 @@ const { Schema } = mongoose;
 
 const ChatSchema = new Schema(
   {
+    pairKey: {type: String},
     participants: [
       { type: Schema.Types.ObjectId, ref: "User", required: true },
     ],
@@ -32,6 +33,8 @@ ChatSchema.path("participants").validate(
 
 // Chat list: find({ participants: me }).sort({ lastMessageAt: -1 })
 ChatSchema.index({ participants: 1, lastMessageAt: -1, _id: -1 });
+
+ChatSchema.index({pairKey: 1}, {unique: true, partialFilterExpression: {pairKey: {$type: "string"}}});
 
 const Chat = HBS_DB.models.Chat || HBS_DB.model("Chat", ChatSchema);
 

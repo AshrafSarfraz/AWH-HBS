@@ -1,21 +1,20 @@
-const { Block } = require("../model/block");
-const { Follow } = require("../model/follow");
+const {Block} = require("../model/block");
+const {Friendship, pairKey} = require("../model/friendship");
 const User = require("../../models/User");
-const DEFAULT_MESSAGE_PERMISSION = "mutual";
+const DEFAULT_MESSAGE_PERMISSION = "friends";
 
 async function canMessageUser(senderId, recipientId) {
-  const sender = String(senderId), recipient = String(recipientId);
+  const sender = String(senderId).toLowerCase(), recipient = String(recipientId).toLowerCase();
   if (sender === recipient) return {allowed: false, code: "INVALID_RECIPIENT"};
-  const [users, block, forward, reverse] = await Promise.all([
+  const [users, block, friendship] = await Promise.all([
     User.find({_id: {$in: [sender, recipient]}}).select("_id privacySettings.messagePermission").lean(),
     Block.exists({$or: [{blocker: sender, blocked: recipient}, {blocker: recipient, blocked: sender}]}),
-    Follow.exists({follower: sender, following: recipient, status: "accepted"}),
-    Follow.exists({follower: recipient, following: sender, status: "accepted"}),
+    Friendship.exists({pairKey: pairKey(sender, recipient), status: "accepted"}),
   ]);
   if (users.length !== 2) return {allowed: false, code: "USER_NOT_FOUND"};
   if (block) return {allowed: false, code: "BLOCKED"};
-  // Legacy everyone/followers/following settings never bypass mutual following.
-  const allowed = Boolean(forward && reverse) && !users.some(u => u.privacySettings?.messagePermission === "nobody");
-  return {allowed, code: allowed ? null : "MUTUAL_FOLLOW_REQUIRED"};
+  if (!friendship) return {allowed: false, code: "FRIENDSHIP_REQUIRED"};
+  if (users.some(u => u.privacySettings?.messagePermission === "nobody")) return {allowed: false, code: "MESSAGES_DISABLED"};
+  return {allowed: true, code: null};
 }
 module.exports = {canMessageUser, DEFAULT_MESSAGE_PERMISSION};
