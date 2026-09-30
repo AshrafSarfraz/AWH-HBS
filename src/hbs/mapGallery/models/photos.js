@@ -20,9 +20,12 @@ const photoSchema = new mongoose.Schema(
       ref: "User",
     },
 
+    brand: {type: mongoose.Schema.Types.ObjectId, ref: "Brand"},
     caption: String,
   },
   { timestamps: true }
 );
+
+photoSchema.index({brand: 1, createdAt: -1});
 
 module.exports = HBS_DB.model("Photo", photoSchema);

@@ -13,6 +13,8 @@ const {
   deletePhoto,
   getMyCheckins,
   getVenueMarkers,
+  getCommunityBrands,
+  getBrandPhotos,
 } = require("../controller/location");
 const { authMiddleware } = require("../../middleware/auth.middleware");
 
@@ -39,6 +41,9 @@ router.patch("/location/:id/name", updateLocationName);
 router.get("/locations/:id/photos", authMiddleware, getLocationPhotos);
 
 router.get("/my-checkins", authMiddleware, getMyCheckins);
+
+router.get("/community-brands", authMiddleware, getCommunityBrands);
+router.get("/brands/:id/photos", authMiddleware, getBrandPhotos);
 
 router.post("/photos", authMiddleware, addPhoto);
 router.delete("/photos/:id", authMiddleware, deletePhoto);

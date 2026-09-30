@@ -311,21 +311,35 @@ exports.getLocationPhotos = async (req, res) => {
  */
 exports.addPhoto = async (req, res) => {
   try {
-    const { locationId, image, caption } = req.body;
-
-    if (!locationId) {
-      return res.status(400).json({ error: "locationId required" });
+    const { brandId, image, caption } = req.body;
+    if (!mongoose.isValidObjectId(brandId)) {
+      return res.status(400).json({error: "Select a registered Hala community brand", code: "BRAND_REQUIRED"});
     }
-
+    const brand = await Brand.findById(brandId).lean();
+    if (!brand || String(brand.status || "").trim().toLowerCase() !== "active") {
+      return res.status(400).json({error: "This brand is not a Hala community member", code: "NOT_COMMUNITY_MEMBER"});
+    }
     if (!image || typeof image !== "string" || !image.trim()) {
-      return res.status(400).json({ error: "Valid image required" });
+      return res.status(400).json({error: "Valid image required"});
     }
-
-    const exists = await Location.exists({ _id: locationId });
-    if (!exists) {
-      return res.status(404).json({ error: "Location not found" });
+    // One location per brand ID. Never merge brands based on their coordinates.
+    let location = await Location.findOne({brand: brand._id});
+    if (!location) {
+      const lat = Number(brand.latitude), lng = Number(brand.longitude);
+      const valid = brand.latitude != null && brand.longitude != null &&
+        String(brand.latitude).trim() !== "" && String(brand.longitude).trim() !== "" &&
+        Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+      try {
+        location = await Location.create({
+          brand: brand._id, name: brand.nameEng || brand.nameArabic,
+          ...(valid ? {location: {type: "Point", coordinates: [lng, lat]}} : {}),
+        });
+      } catch (error) {
+        if (error.code !== 11000) throw error;
+        location = await Location.findOne({brand: brand._id});
+      }
     }
-
+    const locationId = location._id;
     const userId = req.user?.id || req.user?._id;
 
     if (!userId) {
@@ -333,18 +347,19 @@ exports.addPhoto = async (req, res) => {
     }
 
     const count = await Photo.countDocuments({
-      location: locationId,
+      brand: brand._id,
       user: userId,
     });
 
     if (count >= 2) {
       return res
         .status(400)
-        .json({ error: "Max 2 photos allowed per location" });
+        .json({ error: "Max 2 photos allowed per brand" });
     }
 
     const photo = await Photo.create({
       location: locationId,
+      brand: brand._id,
       image: image.trim(),
       caption: caption?.trim() || "",
       user: userId,
@@ -447,5 +462,37 @@ exports.getVenueMarkers = async (req, res) => {
   } catch (err) {
     console.log("[venue-markers]", err.message);
     return res.status(500).json({ error: "Server error" });
+  }
+};
+
+
+// Registered active brands only; the ID is the check-in identity.
+exports.getCommunityBrands = async (req, res) => {
+  try {
+    const brands = await Brand.find({status: /^\s*active\s*$/i})
+      .select("nameEng nameArabic address latitude longitude img selectedCity selectedCountry")
+      .sort({nameEng: 1}).lean();
+    return res.json({data: brands});
+  } catch (error) {
+    return res.status(500).json({error: "Could not load Hala community brands"});
+  }
+};
+
+exports.getBrandPhotos = async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({error: "Invalid brand id"});
+    const brand = await Brand.findById(req.params.id).lean();
+    if (!brand || String(brand.status || "").trim().toLowerCase() !== "active") {
+      return res.status(404).json({error: "This brand is not a Hala community member"});
+    }
+    const filter = {brand: brand._id};
+    const authorIds = await Photo.distinct("user", filter);
+    const visible = await visiblePhotoAuthors(req.user?.id || req.user?._id, authorIds);
+    const photos = await Photo.find({...filter, user: {$in: visible}})
+      .populate("user", "name avatar").populate("location", "name location")
+      .sort({createdAt: -1}).lean();
+    return res.json({data: photos});
+  } catch (error) {
+    return res.status(500).json({error: "Could not load brand check-ins"});
   }
 };
