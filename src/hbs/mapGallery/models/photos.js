@@ -22,10 +22,16 @@ const photoSchema = new mongoose.Schema(
 
     brand: {type: mongoose.Schema.Types.ObjectId, ref: "Brand"},
     caption: String,
+    clientRequestId: String,
   },
   { timestamps: true }
 );
 
 photoSchema.index({brand: 1, createdAt: -1});
+// Older clients omit this field. New clients can retry an uncertain save safely.
+photoSchema.index({user: 1, clientRequestId: 1}, {
+  unique: true,
+  partialFilterExpression: {clientRequestId: {$type: "string"}},
+});
 
 module.exports = HBS_DB.model("Photo", photoSchema);

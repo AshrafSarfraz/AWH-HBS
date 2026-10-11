@@ -311,7 +311,16 @@ exports.getLocationPhotos = async (req, res) => {
  */
 exports.addPhoto = async (req, res) => {
   try {
-    const { brandId, image, caption } = req.body;
+    const { brandId, image, caption, clientRequestId } = req.body;
+    const userId = req.user?.id || req.user?._id;
+    if (!userId) return res.status(401).json({error: "Unauthorized"});
+    if (clientRequestId !== undefined &&
+        (typeof clientRequestId !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(clientRequestId))) {
+      return res.status(400).json({error: "Invalid photo request ID"});
+    }
+    if (caption != null && typeof caption !== "string") {
+      return res.status(400).json({error: "Invalid caption"});
+    }
     if (!mongoose.isValidObjectId(brandId)) {
       return res.status(400).json({error: "Select a registered Hala community brand", code: "BRAND_REQUIRED"});
     }
@@ -322,6 +331,17 @@ exports.addPhoto = async (req, res) => {
     if (!image || typeof image !== "string" || !image.trim()) {
       return res.status(400).json({error: "Valid image required"});
     }
+    const replay = async () => {
+      const existing = await Photo.findOne({user: userId, clientRequestId});
+      if (!existing) return false;
+      if (String(existing.brand) !== String(brand._id) || existing.image !== image.trim() ||
+          (existing.caption || "") !== (caption?.trim() || "")) {
+        res.status(409).json({error: "Photo request ID already used for another post"});
+      } else {res.status(200).json({data: existing});}
+      return true;
+    };
+    // Check before the two-photo limit: a replay must not consume a new slot.
+    if (clientRequestId && await replay()) return;
     // One location per brand ID. Never merge brands based on their coordinates.
     let location = await Location.findOne({brand: brand._id});
     if (!location) {
@@ -340,11 +360,6 @@ exports.addPhoto = async (req, res) => {
       }
     }
     const locationId = location._id;
-    const userId = req.user?.id || req.user?._id;
-
-    if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
 
     const count = await Photo.countDocuments({
       brand: brand._id,
@@ -357,13 +372,18 @@ exports.addPhoto = async (req, res) => {
         .json({ error: "Max 2 photos allowed per brand" });
     }
 
-    const photo = await Photo.create({
+    let photo;
+    try {photo = await Photo.create({
       location: locationId,
       brand: brand._id,
       image: image.trim(),
       caption: caption?.trim() || "",
       user: userId,
-    });
+      ...(clientRequestId ? {clientRequestId} : {}),
+    });} catch (error) {
+      if (error.code === 11000 && clientRequestId && await replay()) return;
+      throw error;
+    }
 
     return res.status(201).json({ data: photo });
   } catch (err) {

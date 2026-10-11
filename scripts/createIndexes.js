@@ -18,6 +18,9 @@ require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 const mongoose = require("mongoose");
 
 const INDEXES = [
+  {col: "photos", spec: {user: 1, clientRequestId: 1}, options: {
+    unique: true, partialFilterExpression: {clientRequestId: {$type: "string"}},
+  }},
   // ── Chat ke messages (SABSE ZAROORI) ───────────────────────────────
   { col: "messages", spec: { chat: 1, createdAt: -1 } },
   { col: "messages", spec: { chat: 1, sender: 1, status: 1 } },
@@ -63,13 +66,14 @@ function indexName(spec) {
   let skipped = 0;
   let failed = 0;
 
-  for (const { col, spec } of INDEXES) {
+  for (const { col, spec, options } of INDEXES) {
     const name = indexName(spec);
     try {
       // background: true → index banate waqt collection lock nahi hota
       await conn.db.collection(col).createIndex(spec, {
         name,
         background: true,
+        ...options,
       });
       console.log(`✅ ${col.padEnd(12)} ${name}`);
       created++;
