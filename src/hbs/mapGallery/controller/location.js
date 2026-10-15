@@ -366,10 +366,10 @@ exports.addPhoto = async (req, res) => {
       user: userId,
     });
 
-    if (count >= 2) {
+    if (count >= 1000) {
       return res
         .status(400)
-        .json({ error: "Max 2 photos allowed per brand" });
+        .json({ error: "Max 1000 photos allowed per brand" });
     }
 
     let photo;
